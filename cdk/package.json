@@ -28,7 +28,7 @@
     "@aws-sdk/client-dynamodb": "^3.902.0",
     "@aws-sdk/client-bedrock-runtime": "^3.901.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.901.0",
-    "@aws-sdk/client-apigatewaymanagementapi": "^3.901.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.917.0",
     "@aws-sdk/signature-v4": "^3.374.0",
     "@aws-sdk/protocol-http": "^3.374.0",
     "@aws-crypto/sha256-js": "^5.2.0",
