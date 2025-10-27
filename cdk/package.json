@@ -26,7 +26,7 @@
     "esbuild": "^0.25.10",
     "@aws-sdk/client-sqs": "^3.901.0",
     "@aws-sdk/client-dynamodb": "^3.902.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.901.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.917.0",
     "@aws-sdk/client-bedrock-agent-runtime": "^3.901.0",
     "@aws-sdk/client-apigatewaymanagementapi": "^3.901.0",
     "@aws-sdk/signature-v4": "^3.374.0",
