@@ -50,7 +50,6 @@ describe('Config Module', () => {
       const validConfig = {
         model: {
           modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
-          anthropicVersion: 'bedrock-2023-05-31',
         },
         knowledgeBase: {
           enabled: false,
@@ -69,8 +68,8 @@ describe('Config Module', () => {
           maxTokens: 800,
           temperature: 0.2,
           topP: 0.9,
-          topK: 250,
         },
+        modelSpecific: {},
       }
 
       const errors = validateConfig(validConfig)
@@ -79,9 +78,7 @@ describe('Config Module', () => {
 
     test('detects missing model.modelId', () => {
       const invalidConfig = {
-        model: {
-          anthropicVersion: 'bedrock-2023-05-31',
-        },
+        model: {},
         knowledgeBase: {
           enabled: false,
           knowledgeBaseId: '',
@@ -99,7 +96,6 @@ describe('Config Module', () => {
           maxTokens: 800,
           temperature: 0.2,
           topP: 0.9,
-          topK: 250,
         },
       }
 
@@ -111,8 +107,11 @@ describe('Config Module', () => {
     test('detects wrong type for generation.temperature', () => {
       const invalidConfig = {
         model: {
-          modelId: 'test',
-          anthropicVersion: 'bedrock-2023-05-31',
+          modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+        },
+        knowledgeBase: {
+          enabled: false,
+          knowledgeBaseId: '',
         },
         prompts: {
           systemWithContext: 'test',
@@ -127,7 +126,6 @@ describe('Config Module', () => {
           maxTokens: 800,
           temperature: 'high', // Should be number
           topP: 0.9,
-          topK: 250,
         },
       }
 
@@ -139,8 +137,11 @@ describe('Config Module', () => {
     test('detects missing prompts section', () => {
       const invalidConfig = {
         model: {
-          modelId: 'test',
-          anthropicVersion: 'bedrock-2023-05-31',
+          modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+        },
+        knowledgeBase: {
+          enabled: false,
+          knowledgeBaseId: '',
         },
         retrieval: {
           numberOfResults: 6,
@@ -150,7 +151,6 @@ describe('Config Module', () => {
           maxTokens: 800,
           temperature: 0.2,
           topP: 0.9,
-          topK: 250,
         },
       }
 
@@ -163,7 +163,6 @@ describe('Config Module', () => {
       const invalidConfig = {
         model: {
           // missing modelId
-          anthropicVersion: 'bedrock-2023-05-31',
         },
         prompts: {
           systemWithContext: 'test',
@@ -178,7 +177,6 @@ describe('Config Module', () => {
           maxTokens: 800,
           temperature: 0.2,
           topP: 0.9,
-          topK: 250,
         },
       }
 
@@ -189,8 +187,7 @@ describe('Config Module', () => {
     test('validates all generation parameters', () => {
       const validConfig = {
         model: {
-          modelId: 'test',
-          anthropicVersion: 'bedrock-2023-05-31',
+          modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
         },
         knowledgeBase: {
           enabled: true,
@@ -209,7 +206,6 @@ describe('Config Module', () => {
           maxTokens: 1500,
           temperature: 0.7,
           topP: 0.95,
-          topK: 300,
         },
       }
 
@@ -220,8 +216,7 @@ describe('Config Module', () => {
     test('validates retrieval parameters', () => {
       const validConfig = {
         model: {
-          modelId: 'test',
-          anthropicVersion: 'bedrock-2023-05-31',
+          modelId: 'amazon.titan-text-express-v1',
         },
         knowledgeBase: {
           enabled: false,
@@ -240,7 +235,6 @@ describe('Config Module', () => {
           maxTokens: 800,
           temperature: 0.2,
           topP: 0.9,
-          topK: 250,
         },
       }
 
@@ -251,15 +245,14 @@ describe('Config Module', () => {
     test('handles empty config object', () => {
       const errors = validateConfig({})
       expect(errors.length).toBeGreaterThan(0)
-      // Should report all missing required fields
-      expect(errors.length).toBeGreaterThanOrEqual(12)
+      // Should report all missing required fields (11 fields now)
+      expect(errors.length).toBeGreaterThanOrEqual(11)
     })
 
     test('handles null values', () => {
       const invalidConfig = {
         model: {
           modelId: null,
-          anthropicVersion: null,
         },
         knowledgeBase: {
           enabled: null,
@@ -278,7 +271,6 @@ describe('Config Module', () => {
           maxTokens: null,
           temperature: null,
           topP: null,
-          topK: null,
         },
       }
 
@@ -303,8 +295,7 @@ describe('Config Module', () => {
       test('fetches configuration from SSM successfully', async () => {
         const mockConfig = {
           model: {
-            modelId: 'test-model',
-            anthropicVersion: 'bedrock-2023-05-31',
+            modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
           },
           knowledgeBase: {
             enabled: false,
@@ -323,8 +314,8 @@ describe('Config Module', () => {
             maxTokens: 800,
             temperature: 0.2,
             topP: 0.9,
-            topK: 250,
           },
+          modelSpecific: {},
         }
 
         mockSend.mockResolvedValueOnce({
@@ -364,7 +355,7 @@ describe('Config Module', () => {
     describe('updateConfig', () => {
       test('updates configuration successfully with object', async () => {
         const newConfig = {
-          model: { modelId: 'new-model', anthropicVersion: 'v1' },
+          model: { modelId: 'anthropic.claude-3-haiku-20240307-v1:0' },
           knowledgeBase: { enabled: true, knowledgeBaseId: 'my-kb' },
           prompts: {
             systemWithContext: 'new',
@@ -372,7 +363,8 @@ describe('Config Module', () => {
             contextTemplate: 'new',
           },
           retrieval: { numberOfResults: 10, maxContextLength: 2000 },
-          generation: { maxTokens: 1000, temperature: 0.5, topP: 0.95, topK: 300 },
+          generation: { maxTokens: 1000, temperature: 0.5, topP: 0.95 },
+          modelSpecific: {},
         }
 
         mockSend.mockResolvedValueOnce({})
