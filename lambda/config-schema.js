@@ -1,6 +1,7 @@
 /**
  * Configuration schema for Bedrock Chatbot
  * This defines the structure of the configuration stored in SSM Parameter Store
+ * Uses the Converse API for model-agnostic inference across all Bedrock models
  */
 
 /**
@@ -10,12 +11,12 @@
  * @property {PromptConfig} prompts - System prompts configuration
  * @property {RetrievalConfig} retrieval - Knowledge base retrieval configuration
  * @property {GenerationConfig} generation - Generation parameters
+ * @property {Object} modelSpecific - Optional model-specific parameters (passed as additionalModelRequestFields)
  */
 
 /**
  * @typedef {Object} ModelConfig
- * @property {string} modelId - Bedrock model ID (e.g., anthropic.claude-3-5-sonnet-20240620-v1:0)
- * @property {string} anthropicVersion - Anthropic API version
+ * @property {string} modelId - Bedrock model ID (e.g., anthropic.claude-3-5-sonnet-20240620-v1:0, amazon.titan-text-express-v1, meta.llama3-70b-instruct-v1:0)
  */
 
 /**
@@ -42,7 +43,6 @@
  * @property {number} maxTokens - Maximum tokens to generate
  * @property {number} temperature - Temperature for generation (0.0 to 1.0)
  * @property {number} topP - Top P sampling parameter
- * @property {number} topK - Top K sampling parameter
  */
 
 /**
@@ -52,7 +52,6 @@
 const defaultConfig = {
   model: {
     modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
-    anthropicVersion: 'bedrock-2023-05-31',
   },
   knowledgeBase: {
     enabled: false,
@@ -72,8 +71,8 @@ const defaultConfig = {
     maxTokens: 800,
     temperature: 0.2,
     topP: 0.9,
-    topK: 250,
   },
+  modelSpecific: {},
 }
 
 module.exports = {
