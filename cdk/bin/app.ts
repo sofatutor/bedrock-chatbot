@@ -9,15 +9,34 @@ const app = new cdk.App()
 
 const env = { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION }
 
-const identity = new IdentityStack(app, 'IdentityStack', { env })
-const data = new DataStack(app, 'DataStack', { env })
+// Use prefix for shared AWS account visibility
+const stackPrefix = 'BedrockChatbot-'
+const resourcePrefix = 'BedrockChatbot-'
 
-new ApiStack(app, 'ApiStack', {
+const identity = new IdentityStack(app, `${stackPrefix}IdentityStack`, {
   env,
+  stackName: `${stackPrefix}IdentityStack`,
+  resourcePrefix,
+})
+
+const data = new DataStack(app, `${stackPrefix}DataStack`, {
+  env,
+  stackName: `${stackPrefix}DataStack`,
+  resourcePrefix,
+})
+
+new ApiStack(app, `${stackPrefix}ApiStack`, {
+  env,
+  stackName: `${stackPrefix}ApiStack`,
+  resourcePrefix,
   userPool: identity.userPool,
   userPoolClient: identity.userPoolClient,
   sessionTable: data.sessionTable,
   policyTable: data.policyTable,
 })
 
-new FrontendStack(app, 'FrontendStack', { env })
+new FrontendStack(app, `${stackPrefix}FrontendStack`, {
+  env,
+  stackName: `${stackPrefix}FrontendStack`,
+  resourcePrefix,
+})

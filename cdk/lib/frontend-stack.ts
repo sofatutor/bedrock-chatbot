@@ -10,8 +10,9 @@ import { S3Origin } from 'aws-cdk-lib/aws-cloudfront-origins'
 import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment'
 import { join } from 'path'
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface FrontendProps extends StackProps {}
+export interface FrontendProps extends StackProps {
+  resourcePrefix: string
+}
 
 export class FrontendStack extends Stack {
   public readonly siteUrl: string
@@ -20,6 +21,7 @@ export class FrontendStack extends Stack {
     super(scope, id, props)
 
     const bucket = new Bucket(this, 'SiteBucket', {
+      bucketName: `${props.resourcePrefix.toLowerCase()}site-${this.account}`,
       blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
     })
@@ -34,10 +36,6 @@ export class FrontendStack extends Stack {
     })
 
     const sitePath = join(__dirname, '../../site')
-
-    // TODO: Use these endpoints to configure frontend
-    // const rest = Fn.importValue('BedrockChatbot-RestApiUrl')
-    // const ws = Fn.importValue('BedrockChatbot-WsEndpoint')
 
     new BucketDeployment(this, 'DeploySite', {
       destinationBucket: bucket,

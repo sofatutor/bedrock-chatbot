@@ -14,6 +14,7 @@ import {
   handleRestore,
   handleReset,
 } from './lib/config.js'
+import { handleOpen } from './lib/ui.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -107,6 +108,14 @@ configCmd
   .description('Reset configuration to defaults')
   .action(async () => {
     await handleReset()
+  })
+
+// UI command
+program
+  .command('open')
+  .description('Open the chatbot UI in browser with latest config')
+  .action(async () => {
+    await handleOpen()
   })
 
 // Parse arguments
