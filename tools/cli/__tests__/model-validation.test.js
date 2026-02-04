@@ -40,57 +40,83 @@ const { validateModelId, validateGenerationParams, validateConfig } = await impo
 
 describe('Model ID Validation', () => {
   describe('validateModelId', () => {
-    test.each([
-      ['anthropic.claude-3-5-sonnet-20240620-v1:0', true],
-      ['anthropic.claude-3-haiku-20240307-v1:0', true],
-      ['anthropic.claude-instant-v1', true],
-      ['amazon.titan-text-express-v1', true],
-      ['amazon.titan-text-lite-v1', true],
-      ['amazon.nova-micro-v1:0', true],
-      ['amazon.nova-lite-v1:0', true],
-      ['meta.llama3-70b-instruct-v1:0', true],
-      ['meta.llama2-13b-chat-v1', true],
-      ['cohere.command-r-plus-v1:0', true],
-      ['cohere.command-text-v14', true],
-      ['cohere.embed-english-v3', true],
-      ['mistral.mistral-large-2402-v1:0', true],
-      ['mistral.mixtral-8x7b-instruct-v0:1', true],
-      ['ai21.jamba-1-5-large-v1:0', true],
-      ['ai21.j2-ultra-v1', true],
-      ['deepseek.deepseek-r1-v1:0', true],
-    ])('validates known model ID %s as valid', (modelId, isValid) => {
-      const result = validateModelId(modelId)
-      expect(result === null).toBe(isValid)
+    describe('known providers (no error, no warning)', () => {
+      test.each([
+        'anthropic.claude-3-5-sonnet-20240620-v1:0',
+        'anthropic.claude-3-haiku-20240307-v1:0',
+        'anthropic.claude-instant-v1',
+        'amazon.titan-text-express-v1',
+        'amazon.titan-text-lite-v1',
+        'amazon.nova-micro-v1:0',
+        'amazon.nova-lite-v1:0',
+        'meta.llama3-70b-instruct-v1:0',
+        'meta.llama2-13b-chat-v1',
+        'cohere.command-r-plus-v1:0',
+        'cohere.command-text-v14',
+        'cohere.embed-english-v3',
+        'mistral.mistral-large-2402-v1:0',
+        'mistral.mixtral-8x7b-instruct-v0:1',
+        'ai21.jamba-1-5-large-v1:0',
+        'ai21.j2-ultra-v1',
+        'deepseek.deepseek-r1-v1:0',
+        'stability.sdxl-v1',
+      ])('accepts known model ID %s without error or warning', (modelId) => {
+        const result = validateModelId(modelId)
+        expect(result.error).toBeNull()
+        expect(result.warning).toBeNull()
+      })
     })
 
-    test.each([
-      ['unknown.model-v1', false],
-      ['invalid', false],
-      ['openai.gpt-4', false],
-      ['', false],
-      ['random-string', false],
-    ])('rejects unknown model ID %s', (modelId) => {
-      const result = validateModelId(modelId)
-      expect(result).not.toBeNull()
-      expect(typeof result).toBe('string')
+    describe('unknown providers with valid format (warning only)', () => {
+      test.each([
+        'newprovider.model-v1',
+        'openai.gpt-4',
+        'custom.my-fine-tuned-model',
+        'future.bedrock-model-2025',
+      ])('accepts unknown provider %s with warning but no error', (modelId) => {
+        const result = validateModelId(modelId)
+        expect(result.error).toBeNull()
+        expect(result.warning).not.toBeNull()
+        expect(result.warning).toContain('Unknown model provider')
+      })
     })
 
-    test('returns error for null modelId', () => {
-      const result = validateModelId(null)
-      expect(result).not.toBeNull()
-      expect(result).toContain('non-empty string')
-    })
+    describe('invalid format (error)', () => {
+      test('returns error for model ID without dot separator', () => {
+        const result = validateModelId('invalid-no-dot')
+        expect(result.error).not.toBeNull()
+        expect(result.error).toContain('Invalid modelId format')
+        expect(result.warning).toBeNull()
+      })
 
-    test('returns error for undefined modelId', () => {
-      const result = validateModelId(undefined)
-      expect(result).not.toBeNull()
-      expect(result).toContain('non-empty string')
-    })
+      test('returns error for empty string', () => {
+        const result = validateModelId('')
+        expect(result.error).not.toBeNull()
+        expect(result.error).toContain('non-empty string')
+      })
 
-    test('returns error for non-string modelId', () => {
-      const result = validateModelId(123)
-      expect(result).not.toBeNull()
-      expect(result).toContain('non-empty string')
+      test('returns error for null modelId', () => {
+        const result = validateModelId(null)
+        expect(result.error).not.toBeNull()
+        expect(result.error).toContain('non-empty string')
+      })
+
+      test('returns error for undefined modelId', () => {
+        const result = validateModelId(undefined)
+        expect(result.error).not.toBeNull()
+        expect(result.error).toContain('non-empty string')
+      })
+
+      test('returns error for non-string modelId', () => {
+        const result = validateModelId(123)
+        expect(result.error).not.toBeNull()
+        expect(result.error).toContain('non-empty string')
+      })
+
+      test('returns error for model ID with only spaces', () => {
+        const result = validateModelId('   ')
+        expect(result.error).not.toBeNull()
+      })
     })
   })
 })
@@ -230,76 +256,85 @@ describe('Cross-model Configuration Validation', () => {
     generation: { maxTokens: 800, temperature: 0.5, topP: 0.9 },
   })
 
-  test('validates configuration with Anthropic Claude model', () => {
-    const config = createValidConfig('anthropic.claude-3-5-sonnet-20240620-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
+  describe('known providers pass without errors or warnings', () => {
+    test.each([
+      ['Anthropic Claude', 'anthropic.claude-3-5-sonnet-20240620-v1:0'],
+      ['Amazon Titan', 'amazon.titan-text-express-v1'],
+      ['Amazon Nova', 'amazon.nova-lite-v1:0'],
+      ['Meta Llama', 'meta.llama3-70b-instruct-v1:0'],
+      ['Cohere', 'cohere.command-r-plus-v1:0'],
+      ['Mistral', 'mistral.mistral-large-2402-v1:0'],
+      ['AI21', 'ai21.jamba-1-5-large-v1:0'],
+      ['DeepSeek', 'deepseek.deepseek-r1-v1:0'],
+      ['Stability', 'stability.sdxl-v1:0'],
+    ])('validates %s model without errors or warnings', (providerName, modelId) => {
+      const config = createValidConfig(modelId)
+      const { errors, warnings } = validateConfig(config, { includeWarnings: true })
+      expect(errors).toHaveLength(0)
+      expect(warnings).toHaveLength(0)
+    })
   })
 
-  test('validates configuration with Amazon Titan model', () => {
-    const config = createValidConfig('amazon.titan-text-express-v1')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
+  describe('unknown providers pass with warning (model-agnostic support)', () => {
+    test('accepts unknown provider with valid format, shows warning', () => {
+      const config = createValidConfig('newprovider.future-model-v1')
+      const { errors, warnings } = validateConfig(config, { includeWarnings: true })
+      expect(errors).toHaveLength(0)
+      expect(warnings.length).toBeGreaterThan(0)
+      expect(warnings.some((w) => w.includes('Unknown model provider'))).toBe(true)
+    })
+
+    test('accepts hypothetical future AWS provider', () => {
+      const config = createValidConfig('futureprovider.ai-model-2026-v1')
+      const { errors, warnings } = validateConfig(config, { includeWarnings: true })
+      expect(errors).toHaveLength(0)
+      // Warning is informational, not blocking
+    })
   })
 
-  test('validates configuration with Amazon Nova model', () => {
-    const config = createValidConfig('amazon.nova-lite-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
+  describe('invalid model IDs fail with error', () => {
+    test('rejects model ID without dot separator', () => {
+      const config = createValidConfig('invalid-no-dot')
+      const { errors } = validateConfig(config, { includeWarnings: true })
+      expect(errors.length).toBeGreaterThan(0)
+      expect(errors.some((e) => e.includes('Invalid modelId format'))).toBe(true)
+    })
   })
 
-  test('validates configuration with Meta Llama model', () => {
-    const config = createValidConfig('meta.llama3-70b-instruct-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
+  describe('parameter errors are reported alongside model warnings', () => {
+    test('reports parameter error with unknown provider warning', () => {
+      const config = {
+        model: { modelId: 'unknown.model-v1' },
+        knowledgeBase: { enabled: false, knowledgeBaseId: '' },
+        prompts: {
+          systemWithContext: 'test',
+          systemWithoutContext: 'test',
+          contextTemplate: 'test',
+        },
+        retrieval: { numberOfResults: 6, maxContextLength: 1000 },
+        generation: { maxTokens: 800, temperature: 1.5, topP: 0.9 },
+      }
+      const { errors, warnings } = validateConfig(config, { includeWarnings: true })
+      // Temperature error should be in errors
+      expect(errors.some((err) => err.includes('temperature'))).toBe(true)
+      // Unknown provider should be in warnings (not errors)
+      expect(warnings.some((w) => w.includes('Unknown model provider'))).toBe(true)
+    })
   })
 
-  test('validates configuration with Cohere model', () => {
-    const config = createValidConfig('cohere.command-r-plus-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
-  })
+  describe('backwards compatibility: errors-only mode', () => {
+    test('returns only errors array by default', () => {
+      const config = createValidConfig('anthropic.claude-3-5-sonnet-20240620-v1:0')
+      const result = validateConfig(config)
+      expect(Array.isArray(result)).toBe(true)
+      expect(result).toHaveLength(0)
+    })
 
-  test('validates configuration with Mistral model', () => {
-    const config = createValidConfig('mistral.mistral-large-2402-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
-  })
-
-  test('validates configuration with AI21 model', () => {
-    const config = createValidConfig('ai21.jamba-1-5-large-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
-  })
-
-  test('validates configuration with DeepSeek model', () => {
-    const config = createValidConfig('deepseek.deepseek-r1-v1:0')
-    const errors = validateConfig(config)
-    expect(errors).toHaveLength(0)
-  })
-
-  test('rejects configuration with unknown model provider', () => {
-    const config = createValidConfig('unknown.model-v1')
-    const errors = validateConfig(config)
-    expect(errors.length).toBeGreaterThan(0)
-    expect(errors.some((err) => err.includes('Unknown model provider'))).toBe(true)
-  })
-
-  test('reports both model and parameter errors', () => {
-    const config = {
-      model: { modelId: 'unknown.model-v1' },
-      knowledgeBase: { enabled: false, knowledgeBaseId: '' },
-      prompts: {
-        systemWithContext: 'test',
-        systemWithoutContext: 'test',
-        contextTemplate: 'test',
-      },
-      retrieval: { numberOfResults: 6, maxContextLength: 1000 },
-      generation: { maxTokens: 800, temperature: 1.5, topP: 0.9 },
-    }
-    const errors = validateConfig(config)
-    expect(errors.length).toBeGreaterThanOrEqual(2)
-    expect(errors.some((err) => err.includes('Unknown model provider'))).toBe(true)
-    expect(errors.some((err) => err.includes('temperature'))).toBe(true)
+    test('unknown provider does not appear in errors-only mode', () => {
+      const config = createValidConfig('unknown.model-v1')
+      const result = validateConfig(config)
+      // Should not contain unknown provider error since it's now a warning
+      expect(result.some((e) => e.includes('Unknown model provider'))).toBe(false)
+    })
   })
 })
