@@ -4,12 +4,9 @@ const {
 } = require('@aws-sdk/client-apigatewaymanagementapi')
 const {
   BedrockRuntimeClient,
-  InvokeModelWithResponseStreamCommand,
+  ConverseStreamCommand,
+  ConverseCommand,
 } = require('@aws-sdk/client-bedrock-runtime')
-const { SignatureV4 } = require('@aws-sdk/signature-v4')
-const { Sha256 } = require('@aws-crypto/sha256-js')
-const { HttpRequest } = require('@aws-sdk/protocol-http')
-const { defaultProvider } = require('@aws-sdk/credential-provider-node')
 const {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
@@ -137,48 +134,54 @@ exports.handler = async (event) => {
       ? config.prompts.contextTemplate.replace('{context}', ctx).replace('{prompt}', prompt)
       : prompt
 
-    const body = {
-      anthropic_version: config.model.anthropicVersion,
-      max_tokens: config.generation.maxTokens,
-      temperature: config.generation.temperature,
-      top_p: config.generation.topP,
-      top_k: config.generation.topK,
-      messages: [{ role: 'user', content: `${system}\n\n${user}` }],
+    // Build Converse API parameters (model-agnostic format)
+    const converseParams = {
+      modelId: config.model.modelId,
+      messages: [{ role: 'user', content: [{ text: user }] }],
+      system: [{ text: system }],
+      inferenceConfig: {
+        maxTokens: config.generation.maxTokens,
+        temperature: config.generation.temperature,
+        topP: config.generation.topP,
+      },
     }
 
-    const base = {
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify(body),
+    // Add model-specific parameters if configured
+    if (config.modelSpecific && Object.keys(config.modelSpecific).length > 0) {
+      converseParams.additionalModelRequestFields = config.modelSpecific
     }
+
     const useProfile = process.env.INFERENCE_PROFILE_ARN && process.env.INFERENCE_PROFILE_ARN.trim()
 
     if (!useProfile) {
-      // Regular streaming with modelId
-      const cmd = new InvokeModelWithResponseStreamCommand({
-        ...base,
-        modelId: config.model.modelId,
-      })
+      // Streaming with ConverseStream API (model-agnostic)
+      const cmd = new ConverseStreamCommand(converseParams)
       const resp = await bedrock.send(cmd)
       let seq = 0
-      for await (const evt of resp.body) {
-        if (evt.chunk && evt.chunk.bytes) {
-          try {
-            const payload = JSON.parse(Buffer.from(evt.chunk.bytes).toString('utf-8'))
-            const delta = payload.delta?.text || payload.output_text || ''
-            if (delta) {
-              await ws.send(
-                new PostToConnectionCommand({
-                  ConnectionId: connectionId,
-                  Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: delta })),
-                }),
-              )
-            }
-          } catch (e) {
-            console.log('stream parse error', e)
-          }
+
+      for await (const evt of resp.stream) {
+        // Handle content block delta events (streaming text)
+        if (evt.contentBlockDelta?.delta?.text) {
+          const delta = evt.contentBlockDelta.delta.text
+          await ws.send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: delta })),
+            }),
+          )
+        }
+        // Handle message stop event (end of response)
+        if (evt.messageStop) {
+          break
+        }
+        // Handle errors in stream
+        if (evt.internalServerException || evt.modelStreamErrorException) {
+          const error = evt.internalServerException || evt.modelStreamErrorException
+          console.log('Stream error:', error.message)
+          throw new Error(error.message || 'Stream error')
         }
       }
+
       await ws.send(
         new PostToConnectionCommand({
           ConnectionId: connectionId,
@@ -186,50 +189,26 @@ exports.handler = async (event) => {
         }),
       )
     } else {
-      // Fallback: non-streaming invoke via inference profile, then stream chunks to client
-      const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'eu-central-1'
-      const endpoint = `https://bedrock-runtime.${region}.amazonaws.com`
-      const path = `/inference-profiles/${encodeURIComponent(process.env.INFERENCE_PROFILE_ARN)}/invoke-model`
-
-      const request = new HttpRequest({
-        protocol: 'https:',
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-        },
-        hostname: `bedrock-runtime.${region}.amazonaws.com`,
-        path,
-        body: JSON.stringify(body),
-      })
-
-      const signer = new SignatureV4({
-        service: 'bedrock',
-        region,
-        sha256: Sha256,
-        credentials: defaultProvider(),
-      })
-      const signed = await signer.sign(request)
-
-      const res = await fetch(`${endpoint}${path}`, {
-        method: 'POST',
-        headers: signed.headers,
-        body: request.body,
-      })
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '')
-        console.log('profile invoke error', res.status, errText)
-        throw new Error(`Bedrock profile invoke failed: ${res.status}`)
+      // Fallback: non-streaming Converse API for inference profiles
+      // Use the inference profile ARN as the modelId
+      const profileParams = {
+        ...converseParams,
+        modelId: process.env.INFERENCE_PROFILE_ARN,
       }
-      const txt = await res.text()
-      let json
-      try {
-        json = JSON.parse(txt)
-      } catch {
-        json = {}
+
+      const resp = await bedrock.send(new ConverseCommand(profileParams))
+
+      // Extract text from the response
+      let out = ''
+      if (resp.output?.message?.content) {
+        for (const block of resp.output.message.content) {
+          if (block.text) {
+            out += block.text
+          }
+        }
       }
-      const out = json.output_text || json.completion || JSON.stringify(json)
-      // stream the output in small chunks
+
+      // Stream the output in small chunks to client
       let seq = 0
       for (const ch of out.split('')) {
         await ws.send(
