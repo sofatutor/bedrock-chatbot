@@ -88,12 +88,71 @@ export async function updateConfig(configValue) {
 }
 
 /**
+ * Known model provider patterns for validation
+ */
+const MODEL_PATTERNS = {
+  anthropic: /^anthropic\.claude-/,
+  amazon: /^amazon\.(titan|nova)-/,
+  meta: /^meta\.llama/,
+  cohere: /^cohere\.(command|embed)-/,
+  mistral: /^mistral\./,
+  ai21: /^ai21\./,
+  deepseek: /^deepseek\./,
+}
+
+/**
+ * Validate model ID format
+ * @param {string} modelId - The model ID to validate
+ * @returns {string|null} Error message if invalid, null if valid
+ */
+export function validateModelId(modelId) {
+  if (!modelId || typeof modelId !== 'string') {
+    return 'modelId must be a non-empty string'
+  }
+
+  const isKnownProvider = Object.values(MODEL_PATTERNS).some((pattern) => pattern.test(modelId))
+  if (!isKnownProvider) {
+    return `Unknown model provider for modelId: ${modelId}. Expected patterns: anthropic.*, amazon.*, meta.*, cohere.*, mistral.*, ai21.*, deepseek.*`
+  }
+
+  return null
+}
+
+/**
+ * Validate generation parameters
+ * @param {Object} config - The configuration object
+ * @returns {string[]} Array of error messages
+ */
+export function validateGenerationParams(config) {
+  const errors = []
+
+  if (!config.generation) {
+    return errors // Will be caught by required field validation
+  }
+
+  const { temperature, topP, maxTokens } = config.generation
+
+  if (typeof temperature === 'number' && (temperature < 0 || temperature > 1)) {
+    errors.push('generation.temperature must be between 0 and 1')
+  }
+
+  if (typeof topP === 'number' && (topP < 0 || topP > 1)) {
+    errors.push('generation.topP must be between 0 and 1')
+  }
+
+  if (typeof maxTokens === 'number' && maxTokens < 1) {
+    errors.push('generation.maxTokens must be at least 1')
+  }
+
+  return errors
+}
+
+/**
  * Validate configuration JSON
  */
 export function validateConfig(config) {
   const requiredFields = [
     { path: 'model.modelId', type: 'string' },
-    { path: 'model.anthropicVersion', type: 'string' },
     { path: 'knowledgeBase.enabled', type: 'boolean' },
     { path: 'knowledgeBase.knowledgeBaseId', type: 'string' },
     { path: 'prompts.systemWithContext', type: 'string' },
@@ -104,11 +163,11 @@ export function validateConfig(config) {
     { path: 'generation.maxTokens', type: 'number' },
     { path: 'generation.temperature', type: 'number' },
     { path: 'generation.topP', type: 'number' },
-    { path: 'generation.topK', type: 'number' },
   ]
 
   const errors = []
 
+  // Validate required fields and types
   for (const field of requiredFields) {
     const value = getNestedValue(config, field.path)
     if (value === undefined) {
@@ -117,6 +176,19 @@ export function validateConfig(config) {
       errors.push(`Invalid type for ${field.path}: expected ${field.type}, got ${typeof value}`)
     }
   }
+
+  // Validate model ID format (only if modelId exists and is a string)
+  const modelId = getNestedValue(config, 'model.modelId')
+  if (modelId && typeof modelId === 'string') {
+    const modelError = validateModelId(modelId)
+    if (modelError) {
+      errors.push(modelError)
+    }
+  }
+
+  // Validate generation parameter ranges
+  const paramErrors = validateGenerationParams(config)
+  errors.push(...paramErrors)
 
   return errors
 }
