@@ -96,21 +96,66 @@
       const { useEffect, useRef, useState } = React
 
       function App() {
-        const [cfg, setCfg] = useState({ rest: '', ws: '' })
+        const [cfg, setCfg] = useState({ rest: '', ws: '', userId: '' })
         const [status, setStatus] = useState('disconnected')
         const [connectionId, setConnectionId] = useState('—')
-        const [sessionId] = useState(() => Math.random().toString(36).slice(2))
+        const [sessionId, setSessionId] = useState(() => Math.random().toString(36).slice(2))
         const [prompt, setPrompt] = useState('Hello there!')
         const [messages, setMessages] = useState([])
+        const [threads, setThreads] = useState([])
+        const [selectedThread, setSelectedThread] = useState('')
         const wsRef = useRef(null)
         const currentRef = useRef(null)
+        const historyRef = useRef([])
 
         useEffect(() => {
           const params = new URLSearchParams(window.location.search)
           const rest = params.get('rest') || ''
           const ws = params.get('ws') || ''
-          if (rest || ws) setCfg({ rest, ws })
+          const userId = params.get('userId') || ''
+          if (rest || ws || userId) setCfg({ rest, ws, userId })
         }, [])
+
+        useEffect(() => {
+          if (cfg.rest) refreshThreads()
+        }, [cfg.rest, cfg.userId])
+
+        async function refreshThreads() {
+          if (!cfg.rest) return
+          const base = cfg.rest.replace(/\/chat\/?$/, '')
+          const userId = cfg.userId || 'anonymous'
+          const res = await fetch(`${base}/threads?userId=${encodeURIComponent(userId)}`, {
+            headers: { 'x-user-id': userId },
+          }).catch(() => null)
+          if (!res || !res.ok) return
+          const data = await res.json()
+          setThreads(data.threads || [])
+        }
+
+        async function loadThread(sid) {
+          if (!cfg.rest || !sid) return
+          const base = cfg.rest.replace(/\/chat\/?$/, '')
+          const userId = cfg.userId || 'anonymous'
+          const res = await fetch(
+            `${base}/threads?sessionId=${encodeURIComponent(sid)}&userId=${encodeURIComponent(userId)}`,
+            { headers: { 'x-user-id': userId } },
+          ).catch(() => null)
+          if (!res || !res.ok) return
+          const data = await res.json()
+          const msgs = data.messages || []
+          const mapped = msgs.map((m) => ({
+            who: m.role === 'user' ? 'you' : 'assistant',
+            text: m.content || '',
+          }))
+          setMessages(mapped)
+          historyRef.current = msgs.map((m) => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content || '',
+          }))
+          currentRef.current = null
+          setSessionId(sid)
+          setSelectedThread(sid)
+        }
 
         function connect() {
           if (!cfg.ws) return alert('Missing ws in config.json')
@@ -146,6 +191,9 @@
                 // trigger re-render
                 setMessages((m) => [...m])
               } else if (data.event === 'complete') {
+                if (currentRef.current?.text) {
+                  historyRef.current.push({ role: 'assistant', content: currentRef.current.text })
+                }
                 currentRef.current = null
               }
             } catch (_) {}
@@ -155,6 +203,7 @@
         async function send() {
           if (!prompt.trim()) return
           setMessages((m) => [...m, { who: 'you', text: prompt }])
+          historyRef.current.push({ role: 'user', content: prompt })
           setPrompt('')
           if (!cfg.rest) return alert('Missing rest in config.json')
           if (!connectionId || connectionId === '—' || !String(connectionId).trim()) {
@@ -163,10 +212,19 @@
             )
             return
           }
-          const payload = { prompt, sessionId, connectionId }
+          const payload = {
+            prompt,
+            sessionId,
+            connectionId,
+            messages: historyRef.current,
+            userId: cfg.userId || 'anonymous',
+          }
           const res = await fetch(cfg.rest, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-user-id': cfg.userId || 'anonymous',
+            },
             body: JSON.stringify(payload),
           })
           if (!res.ok) alert('Enqueue failed: ' + res.status)
@@ -185,7 +243,44 @@
                 value={cfg.ws}
                 onChange={(e) => setCfg((v) => ({ ...v, ws: e.target.value }))}
               />
+              <input
+                placeholder="User ID"
+                value={cfg.userId}
+                onChange={(e) => setCfg((v) => ({ ...v, userId: e.target.value }))}
+              />
               <button onClick={connect}>Connect</button>
+            </div>
+            <div className="row" style={{ marginTop: 8 }}>
+              <select
+                value={selectedThread}
+                onChange={(e) => {
+                  const sid = e.target.value
+                  setSelectedThread(sid)
+                  loadThread(sid)
+                }}
+                style={{ flex: 1 }}
+              >
+                <option value="">— Select a conversation —</option>
+                {threads.map((t) => (
+                  <option key={t.sessionId} value={t.sessionId}>
+                    {t.title || t.sessionId}
+                    {t.updatedAt ? ` • ${new Date(t.updatedAt).toLocaleString()}` : ''}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => {
+                  const sid = Math.random().toString(36).slice(2)
+                  setSessionId(sid)
+                  setSelectedThread('')
+                  setMessages([])
+                  historyRef.current = []
+                  currentRef.current = null
+                }}
+              >
+                New conversation
+              </button>
+              <button onClick={refreshThreads}>Refresh</button>
             </div>
             <p className="meta">
               Session: {sessionId} • Connection: {connectionId} • Status: {status}
@@ -209,7 +304,15 @@
               >
                 Send
               </button>
-              <button onClick={() => setMessages([])}>Clear</button>
+              <button
+                onClick={() => {
+                  setMessages([])
+                  historyRef.current = []
+                  currentRef.current = null
+                }}
+              >
+                Clear
+              </button>
             </div>
           </div>
         )

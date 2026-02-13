@@ -103,7 +103,13 @@
           placeholder="REST endpoint (e.g., https://xxxx.execute-api.region.amazonaws.com/chat)"
         />
         <input id="ws" placeholder="WebSocket endpoint (wss://.../prod)" />
+        <input id="userId" placeholder="User ID (optional)" />
         <button id="save">Save</button>
+      </div>
+      <div class="row-inline" style="margin-top: 8px">
+        <select id="threads"></select>
+        <button id="newThread">New conversation</button>
+        <button id="refreshThreads">Refresh</button>
       </div>
       <p class="meta">
         Session: <span id="sid"></span> • Connection: <span id="cid"></span> • Status:
@@ -120,8 +126,23 @@
     </div>
 
     <script>
-      const state = { sessionId: Math.random().toString(36).slice(2), connectionId: null, ws: null }
+      const state = {
+        sessionId: Math.random().toString(36).slice(2),
+        connectionId: null,
+        ws: null,
+        history: [],
+        currentText: '',
+        userId: 'anonymous',
+      }
       document.getElementById('sid').textContent = state.sessionId
+
+      function applyUrlConfig() {
+        const params = new URLSearchParams(window.location.search)
+        const rest = params.get('rest')
+        const ws = params.get('ws')
+        if (rest) document.getElementById('rest').value = rest
+        if (ws) document.getElementById('ws').value = ws
+      }
 
       // load config if present
       async function loadConfig() {
@@ -129,11 +150,18 @@
           const res = await fetch('config.json', { cache: 'no-store' })
           if (res.ok) {
             const cfg = await res.json()
-            document.getElementById('rest').value = cfg.rest || ''
-            document.getElementById('ws').value = cfg.ws || ''
+            const restInput = document.getElementById('rest')
+            const wsInput = document.getElementById('ws')
+            const userInput = document.getElementById('userId')
+            if (!restInput.value) restInput.value = cfg.rest || ''
+            if (!wsInput.value) wsInput.value = cfg.ws || ''
+            if (!userInput.value) userInput.value = cfg.userId || ''
           }
         } catch (_) {}
+        const restVal = document.getElementById('rest').value.trim()
+        if (restVal) setTimeout(() => document.getElementById('refreshThreads').click(), 0)
       }
+      applyUrlConfig()
       loadConfig()
 
       function addBubble(text, who = 'assistant') {
@@ -153,9 +181,59 @@
         const cfg = {
           rest: document.getElementById('rest').value.trim(),
           ws: document.getElementById('ws').value.trim(),
+          userId: document.getElementById('userId').value.trim(),
         }
         await fetch('config.json', { method: 'PUT', body: JSON.stringify(cfg) }).catch(() => {})
         alert('Saved locally (if hosted on S3, upload an updated config.json).')
+      }
+
+      async function refreshThreads() {
+        const rest = document.getElementById('rest').value.trim()
+        if (!rest) return
+        const base = rest.replace(/\/chat\/?$/, '')
+        const userId = document.getElementById('userId').value.trim() || 'anonymous'
+        state.userId = userId
+        const url = `${base}/threads?userId=${encodeURIComponent(userId)}`
+        const res = await fetch(url, { headers: { 'x-user-id': userId } }).catch(() => null)
+        if (!res || !res.ok) return
+        const data = await res.json()
+        const threads = data.threads || []
+        const sel = document.getElementById('threads')
+        sel.innerHTML = ''
+        const optNew = document.createElement('option')
+        optNew.value = ''
+        optNew.textContent = '— Select a conversation —'
+        sel.appendChild(optNew)
+        for (const t of threads) {
+          const opt = document.createElement('option')
+          opt.value = t.sessionId
+          const ts = t.updatedAt ? new Date(t.updatedAt).toLocaleString() : ''
+          opt.textContent = `${t.title || t.sessionId}${ts ? ' • ' + ts : ''}`
+          sel.appendChild(opt)
+        }
+      }
+
+      async function loadThread(sessionId) {
+        const rest = document.getElementById('rest').value.trim()
+        if (!rest) return
+        const base = rest.replace(/\/chat\/?$/, '')
+        const userId = document.getElementById('userId').value.trim() || 'anonymous'
+        state.userId = userId
+        const url = `${base}/threads?sessionId=${encodeURIComponent(sessionId)}&userId=${encodeURIComponent(userId)}`
+        const res = await fetch(url, { headers: { 'x-user-id': userId } }).catch(() => null)
+        if (!res || !res.ok) return
+        const data = await res.json()
+        const messages = data.messages || []
+        document.getElementById('messages').innerHTML = ''
+        state.history = []
+        state.current = null
+        state.currentText = ''
+        for (const m of messages) {
+          addBubble(m.content || '', m.role === 'user' ? 'you' : 'assistant')
+          state.history.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content || '' })
+        }
+        state.sessionId = sessionId
+        document.getElementById('sid').textContent = state.sessionId
       }
 
       document.getElementById('connect').onclick = async () => {
@@ -193,10 +271,18 @@
               // Enable send only after we have a valid connectionId
               document.getElementById('send').disabled = false
             } else if (typ === 'delta') {
-              if (!state.current) state.current = addBubble('', 'assistant')
+              if (!state.current) {
+                state.current = addBubble('', 'assistant')
+                state.currentText = ''
+              }
               state.current.textContent += data.content
+              state.currentText += data.content
             } else if (typ === 'complete') {
+              if (state.currentText) {
+                state.history.push({ role: 'assistant', content: state.currentText })
+              }
               state.current = null
+              state.currentText = ''
             }
           } catch (e) {
             // Non-JSON frames ignored
@@ -204,10 +290,28 @@
         }
       }
 
+      document.getElementById('refreshThreads').onclick = refreshThreads
+      document.getElementById('newThread').onclick = () => {
+        state.sessionId = Math.random().toString(36).slice(2)
+        document.getElementById('sid').textContent = state.sessionId
+        document.getElementById('messages').innerHTML = ''
+        state.history = []
+        state.current = null
+        state.currentText = ''
+        state.userId = document.getElementById('userId').value.trim() || 'anonymous'
+        const sel = document.getElementById('threads')
+        if (sel) sel.value = ''
+      }
+      document.getElementById('threads').onchange = (e) => {
+        const sessionId = e.target.value
+        if (sessionId) loadThread(sessionId)
+      }
+
       document.getElementById('send').onclick = async () => {
         const prompt = document.getElementById('prompt').value.trim()
         if (!prompt) return
         addBubble(prompt, 'you')
+        state.history.push({ role: 'user', content: prompt })
         document.getElementById('prompt').value = ''
 
         // REST enqueue
@@ -227,10 +331,15 @@
           prompt,
           sessionId: state.sessionId,
           connectionId: state.connectionId,
+          messages: state.history,
+          userId: document.getElementById('userId').value.trim() || 'anonymous',
         }
         const res = await fetch(rest, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-user-id': document.getElementById('userId').value.trim() || 'anonymous',
+          },
           body: JSON.stringify(payload),
         })
         if (!res.ok) addBubble('Enqueue failed: ' + res.status, 'assistant')
@@ -238,6 +347,9 @@
 
       document.getElementById('clear').onclick = () => {
         document.getElementById('messages').innerHTML = ''
+        state.history = []
+        state.current = null
+        state.currentText = ''
       }
     </script>
   </body>

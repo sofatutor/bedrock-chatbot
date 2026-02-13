@@ -16,6 +16,7 @@ import { join } from 'path'
 import { defaultConfig } from '../../lambda/config-schema.js'
 
 export interface ApiProps extends StackProps {
+  resourcePrefix: string
   sessionTable: Table
   policyTable: Table
   userPool: IUserPool
@@ -113,6 +114,19 @@ export class ApiStack extends Stack {
     q.grantSendMessages(enqueueFn)
     props.sessionTable.grantReadWriteData(enqueueFn)
 
+    const threadsFn = new NodejsFunction(this, 'ThreadsFn', {
+      functionName: `${props.resourcePrefix}ThreadsFn`,
+      runtime: Runtime.NODEJS_20_X,
+      entry: join(__dirname, '../../lambda/threads/index.js'),
+      handler: 'handler',
+      architecture: Architecture.ARM_64,
+      environment: {
+        SESSION_TABLE: props.sessionTable.tableName,
+      },
+      bundling: { minify: true, externalModules: [] },
+    })
+    props.sessionTable.grantReadData(threadsFn)
+
     const httpApi = new HttpApi(this, 'ChatHttpApi', {
       corsPreflight: {
         allowOrigins: ['*'],
@@ -124,6 +138,11 @@ export class ApiStack extends Stack {
       path: '/chat',
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('EnqueueInt', enqueueFn),
+    })
+    httpApi.addRoutes({
+      path: '/threads',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('ThreadsInt', threadsFn),
     })
 
     const workerFn = new NodejsFunction(this, 'WorkerFn', {
@@ -184,7 +203,7 @@ export class ApiStack extends Stack {
       exportName: 'BedrockChatbot-WsEndpoint',
     })
     new CfnOutput(this, 'RestApiUrl', {
-      value: this.restApiUrl,
+      value: `${this.restApiUrl}/chat`,
       exportName: 'BedrockChatbot-RestApiUrl',
     })
     new CfnOutput(this, 'ConfigParamName', {

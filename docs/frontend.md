@@ -9,7 +9,9 @@ The POC ships a lightweight, no-build **index.html** that connects to the WebSoc
 
 ## Protocol
 
-- **Send**: `POST /chat` with `{ prompt, sessionId, connectionId }`.
+- **Send**: `POST /chat` with `{ prompt, sessionId, connectionId, messages, userId }`.
+- **List threads**: `GET /threads?userId=...` (or header `x-user-id`).
+- **Load thread**: `GET /threads?sessionId=...&userId=...`.
 - **Receive**: WebSocket frames
 
 ```json

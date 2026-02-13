@@ -11,12 +11,14 @@ const {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
 } = require('@aws-sdk/client-bedrock-agent-runtime')
+const { DynamoDBClient, PutItemCommand, UpdateItemCommand } = require('@aws-sdk/client-dynamodb')
 const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm')
 const { defaultConfig } = require('../config-schema')
 
 const ws = new ApiGatewayManagementApiClient({ endpoint: process.env.WS_API_ENDPOINT })
 const bedrock = new BedrockRuntimeClient({})
 const agentRt = new BedrockAgentRuntimeClient({})
+const ddb = new DynamoDBClient({})
 const ssm = new SSMClient({})
 
 // Configuration cache (with TTL)
@@ -89,7 +91,8 @@ exports.handler = async (event) => {
 
   for (const rec of event.Records) {
     const job = JSON.parse(rec.body)
-    const { prompt, connectionId } = job
+    const { prompt, connectionId, sessionId } = job
+    const userId = typeof job.userId === 'string' && job.userId.trim() ? job.userId.trim() : 'anonymous'
 
     // Determine Knowledge Base ID: config takes precedence over env var
     const knowledgeBaseId = config.knowledgeBase.enabled
@@ -158,11 +161,13 @@ exports.handler = async (event) => {
       const cmd = new ConverseStreamCommand(converseParams)
       const resp = await bedrock.send(cmd)
       let seq = 0
+      let assistantText = ''
 
       for await (const evt of resp.stream) {
         // Handle content block delta events (streaming text)
         if (evt.contentBlockDelta?.delta?.text) {
           const delta = evt.contentBlockDelta.delta.text
+          assistantText += delta
           await ws.send(
             new PostToConnectionCommand({
               ConnectionId: connectionId,
@@ -179,6 +184,38 @@ exports.handler = async (event) => {
           const error = evt.internalServerException || evt.modelStreamErrorException
           console.log('Stream error:', error.message)
           throw new Error(error.message || 'Stream error')
+        }
+      }
+
+      if (assistantText && sessionId) {
+        const now = Date.now()
+        const ttl = Math.floor(now / 1000) + 30 * 24 * 3600
+        try {
+          await ddb.send(
+            new PutItemCommand({
+              TableName: process.env.SESSION_TABLE,
+              Item: {
+                pk: { S: `SESSION#${sessionId}` },
+                sk: { S: `MSG#${now}#assistant` },
+                type: { S: 'message' },
+                role: { S: 'assistant' },
+                content: { S: assistantText },
+                userId: { S: userId },
+                ts: { N: String(now) },
+                ttl: { N: String(ttl) },
+              },
+            }),
+          )
+          await ddb.send(
+            new UpdateItemCommand({
+              TableName: process.env.SESSION_TABLE,
+              Key: { pk: { S: `USER#${userId}` }, sk: { S: `THREAD#${sessionId}` } },
+              UpdateExpression: 'SET updatedAt = :u',
+              ExpressionAttributeValues: { ':u': { N: String(now) } },
+            }),
+          )
+        } catch (e) {
+          console.log('assistant message store failed', e)
         }
       }
 
@@ -219,6 +256,39 @@ exports.handler = async (event) => {
         )
         await new Promise((r) => setTimeout(r, 5))
       }
+
+      if (out && sessionId) {
+        const now = Date.now()
+        const ttl = Math.floor(now / 1000) + 30 * 24 * 3600
+        try {
+          await ddb.send(
+            new PutItemCommand({
+              TableName: process.env.SESSION_TABLE,
+              Item: {
+                pk: { S: `SESSION#${sessionId}` },
+                sk: { S: `MSG#${now}#assistant` },
+                type: { S: 'message' },
+                role: { S: 'assistant' },
+                content: { S: out },
+                userId: { S: userId },
+                ts: { N: String(now) },
+                ttl: { N: String(ttl) },
+              },
+            }),
+          )
+          await ddb.send(
+            new UpdateItemCommand({
+              TableName: process.env.SESSION_TABLE,
+              Key: { pk: { S: `USER#${userId}` }, sk: { S: `THREAD#${sessionId}` } },
+              UpdateExpression: 'SET updatedAt = :u',
+              ExpressionAttributeValues: { ':u': { N: String(now) } },
+            }),
+          )
+        } catch (e) {
+          console.log('assistant message store failed', e)
+        }
+      }
+
       await ws.send(
         new PostToConnectionCommand({
           ConnectionId: connectionId,
