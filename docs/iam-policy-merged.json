@@ -1,0 +1,391 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECSAndFargatePermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:ListTasks",
+        "ecs:DescribeTasks",
+        "ecs:RunTask",
+        "ecs:StartTask",
+        "ecs:StopTask",
+        "ecs:ExecuteCommand",
+        "ecs:ListTaskDefinitions",
+        "ecs:DescribeTaskDefinition",
+        "ecs:RegisterTaskDefinition",
+        "ecs:DeregisterTaskDefinition",
+        "ecs:ListServices",
+        "ecs:DescribeServices",
+        "ecs:CreateService",
+        "ecs:UpdateService",
+        "ecs:DeleteService",
+        "ecs:ListClusters",
+        "ecs:DescribeClusters",
+        "ecs:ListContainerInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AWSExecuteCommandPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:StartSession",
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AdditionalCodePipelinePermissions",
+      "Effect": "Allow",
+      "Action": [
+        "codepipeline:ListRuleExecutions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StsAndEcrCliPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ecr:GetAuthorizationToken",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchGetImage",
+        "ecr:BatchCheckLayerAvailability",
+        "sts:AssumeRole"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "MediaConvert",
+      "Effect": "Allow",
+      "Action": [
+        "mediaConvert:DescribeEndpoints",
+        "mediaConvert:CreateJob",
+        "mediaConvert:Get*",
+        "mediaConvert:List*"
+      ],
+      "Resource": [
+        "*"
+      ]
+    },
+    {
+      "Sid": "AllowPassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::*:role/service-role/MediaConvert_Default_Role"
+      ]
+    },
+    {
+      "Sid": "SecretsManagerPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:CreateSecret",
+        "secretsmanager:UpdateSecret"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:*:secret:Rails*",
+        "arn:aws:secretsmanager:*:*:secret:sofatutor*/secrets/development-??????",
+        "arn:aws:secretsmanager:*:*:secret:sofatutor*/secrets/shared-??????",
+        "arn:aws:secretsmanager:*:*:secret:sofatutor*/secrets/staging-??????",
+        "arn:aws:secretsmanager:*:*:secret:sofatutor*/secrets/test-??????",
+        "arn:aws:secretsmanager:*:*:secret:sofatutor*/secrets/production-??????"
+      ]
+    },
+    {
+      "Sid": "Lightsail",
+      "Effect": "Allow",
+      "Action": [
+        "lightsail:GetInstanceSnapshot",
+        "lightsail:DeleteInstance",
+        "lightsail:GetInstances",
+        "lightsail:RebootInstance",
+        "lightsail:DeleteInstanceSnapshot",
+        "lightsail:GetInstance"
+      ],
+      "Resource": [
+        "arn:aws:lightsail:*:419056219336:*"
+      ]
+    },
+    {
+      "Sid": "WriteRootAccountTestBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObjectAcl",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:PutObjectAcl",
+        "sts:AssumeRole"
+      ],
+      "Resource": [
+        "arn:aws:s3:::documents-test.sofatutor.com/*",
+        "arn:aws:s3:::videos-test.sofatutor.com/*",
+        "arn:aws:s3:::images-test.sofatutor.com/*",
+        "arn:aws:s3:::files-test.sofatutor.com/*",
+        "arn:aws:s3:::static-test.sofatutor.com/*",
+        "arn:aws:s3:::development.sofatutor.com/*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotLambdaPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:InvokeFunction",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:ListFunctions",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:PublishVersion",
+        "lambda:CreateAlias",
+        "lambda:UpdateAlias",
+        "lambda:GetAlias",
+        "lambda:ListAliases",
+        "lambda:ListVersionsByFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:*:function:BedrockChatbot*",
+        "arn:aws:lambda:*:*:function:*WsOnConnect*",
+        "arn:aws:lambda:*:*:function:*WsOnDisconnect*",
+        "arn:aws:lambda:*:*:function:*WsDefault*",
+        "arn:aws:lambda:*:*:function:*EnqueueFn*",
+        "arn:aws:lambda:*:*:function:*WorkerFn*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotDynamoDBPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:BatchGetItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:DescribeTable",
+        "dynamodb:ListTables"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/BedrockChatbot*",
+        "arn:aws:dynamodb:*:*:table/*Sessions*",
+        "arn:aws:dynamodb:*:*:table/*Policies*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotSQSPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueues",
+        "sqs:PurgeQueue",
+        "sqs:ChangeMessageVisibility"
+      ],
+      "Resource": [
+        "arn:aws:sqs:*:*:BedrockChatbot*",
+        "arn:aws:sqs:*:*:*RequestsQueue*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotSSMParameterPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParameterHistory",
+        "ssm:PutParameter",
+        "ssm:DeleteParameter",
+        "ssm:DescribeParameters",
+        "ssm:GetParametersByPath"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:*:parameter/bedrock-chatbot/*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotS3Permissions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:GetObjectVersion",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": [
+        "arn:aws:s3:::*bedrockchatbot*",
+        "arn:aws:s3:::*bedrockchatbot*/*",
+        "arn:aws:s3:::*feedback-store*",
+        "arn:aws:s3:::*feedback-store*/*",
+        "arn:aws:s3:::*site-*",
+        "arn:aws:s3:::*site-*/*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotAPIGatewayPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "execute-api:Invoke",
+        "execute-api:ManageConnections",
+        "apigateway:GET",
+        "apigateway:POST",
+        "apigateway:PUT",
+        "apigateway:DELETE",
+        "apigateway:PATCH"
+      ],
+      "Resource": [
+        "arn:aws:execute-api:*:*:*/prod/*",
+        "arn:aws:execute-api:*:*:*/@connections/*",
+        "arn:aws:apigateway:*::/restapis/*",
+        "arn:aws:apigateway:*::/apis/*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotCognitoPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminCreateUser",
+        "cognito-idp:AdminSetUserPassword",
+        "cognito-idp:AdminDeleteUser",
+        "cognito-idp:AdminUpdateUserAttributes",
+        "cognito-idp:ListUsers",
+        "cognito-idp:ListUserPools",
+        "cognito-idp:DescribeUserPool",
+        "cognito-idp:DescribeUserPoolClient",
+        "cognito-idp:ListUserPoolClients"
+      ],
+      "Resource": [
+        "arn:aws:cognito-idp:*:*:userpool/*"
+      ],
+      "Condition": {
+        "StringLike": {
+          "aws:ResourceTag/aws:cloudformation:stack-name": "BedrockChatbot*"
+        }
+      }
+    },
+    {
+      "Sid": "BedrockChatbotCloudFrontPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:ListDistributions",
+        "cloudfront:CreateInvalidation",
+        "cloudfront:GetInvalidation",
+        "cloudfront:ListInvalidations"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockChatbotBedrockPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:Converse",
+        "bedrock:ConverseStream",
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate",
+        "bedrock:RetrieveAndGenerateStream",
+        "bedrock:GetFoundationModel",
+        "bedrock:ListFoundationModels",
+        "bedrock:GetKnowledgeBase",
+        "bedrock:ListKnowledgeBases"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockChatbotCloudWatchLogsPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:*:log-group:/aws/lambda/BedrockChatbot*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/*WsOnConnect*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/*WsOnDisconnect*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/*WsDefault*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/*EnqueueFn*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/*WorkerFn*",
+        "arn:aws:logs:*:*:log-group:/aws/lambda/*:*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotCloudFormationPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:GetTemplate",
+        "cloudformation:ListStacks",
+        "cloudformation:ListStackResources"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:*:*:stack/BedrockChatbot*",
+        "arn:aws:cloudformation:*:*:stack/DataStack*",
+        "arn:aws:cloudformation:*:*:stack/IdentityStack*",
+        "arn:aws:cloudformation:*:*:stack/ApiStack*",
+        "arn:aws:cloudformation:*:*:stack/FrontendStack*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotIAMReadPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/BedrockChatbot*",
+        "arn:aws:iam::*:role/*-WsOnConnect*",
+        "arn:aws:iam::*:role/*-WsOnDisconnect*",
+        "arn:aws:iam::*:role/*-WsDefault*",
+        "arn:aws:iam::*:role/*-EnqueueFn*",
+        "arn:aws:iam::*:role/*-WorkerFn*"
+      ]
+    },
+    {
+      "Sid": "BedrockChatbotKMSPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:Encrypt",
+        "kms:GenerateDataKey",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "kms:ViaService": [
+            "sqs.*.amazonaws.com",
+            "dynamodb.*.amazonaws.com",
+            "s3.*.amazonaws.com"
+          ]
+        }
+      }
+    }
+  ]
+}
