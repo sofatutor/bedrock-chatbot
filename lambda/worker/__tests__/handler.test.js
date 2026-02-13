@@ -3,8 +3,6 @@
  * Tests for model-agnostic ConverseStream API integration
  */
 
-import { jest } from '@jest/globals'
-
 // Mock environment variables
 process.env.WS_API_ENDPOINT = 'https://test.execute-api.us-east-1.amazonaws.com'
 process.env.CONFIG_PARAM_NAME = '/bedrock-chatbot/config'
@@ -17,14 +15,14 @@ const mockRetrieveSend = jest.fn()
 const mockSSMSend = jest.fn()
 
 // Mock AWS SDK modules
-jest.unstable_mockModule('@aws-sdk/client-apigatewaymanagementapi', () => ({
+jest.mock('@aws-sdk/client-apigatewaymanagementapi', () => ({
   ApiGatewayManagementApiClient: jest.fn(() => ({
     send: mockPostToConnection,
   })),
   PostToConnectionCommand: jest.fn((params) => ({ ...params, _type: 'PostToConnection' })),
 }))
 
-jest.unstable_mockModule('@aws-sdk/client-bedrock-runtime', () => ({
+jest.mock('@aws-sdk/client-bedrock-runtime', () => ({
   BedrockRuntimeClient: jest.fn(() => ({
     send: jest.fn((cmd) => {
       if (cmd._type === 'ConverseStream') {
@@ -40,14 +38,14 @@ jest.unstable_mockModule('@aws-sdk/client-bedrock-runtime', () => ({
   ConverseCommand: jest.fn((params) => ({ ...params, _type: 'Converse' })),
 }))
 
-jest.unstable_mockModule('@aws-sdk/client-bedrock-agent-runtime', () => ({
+jest.mock('@aws-sdk/client-bedrock-agent-runtime', () => ({
   BedrockAgentRuntimeClient: jest.fn(() => ({
     send: mockRetrieveSend,
   })),
   RetrieveCommand: jest.fn((params) => params),
 }))
 
-jest.unstable_mockModule('@aws-sdk/client-ssm', () => ({
+jest.mock('@aws-sdk/client-ssm', () => ({
   SSMClient: jest.fn(() => ({
     send: mockSSMSend,
   })),
@@ -93,15 +91,15 @@ describe('Worker Lambda Handler', () => {
     modelSpecific: {},
   }
 
-  const createSQSEvent = (prompt, connectionId = 'test-connection-id') => ({
+  const createSQSEvent = (prompt, connectionId = 'test-connection-id', extra = {}) => ({
     Records: [
       {
-        body: JSON.stringify({ prompt, connectionId }),
+        body: JSON.stringify({ prompt, connectionId, ...extra }),
       },
     ],
   })
 
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.clearAllMocks()
 
     // Mock SSM to return default config
@@ -111,9 +109,9 @@ describe('Worker Lambda Handler', () => {
       },
     })
 
-    // Re-import handler to reset module state (config cache)
-    const module = await import('../index.js')
-    handler = module.handler
+    // Reset module cache to clear config cache
+    jest.resetModules()
+    handler = require('../index').handler
   })
 
   describe('ConverseStream API Integration', () => {
@@ -131,7 +129,7 @@ describe('Worker Lambda Handler', () => {
       await handler(createSQSEvent('Test prompt'))
 
       // Verify ConverseStreamCommand was called with correct structure
-      const { ConverseStreamCommand } = await import('@aws-sdk/client-bedrock-runtime')
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseStreamCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           modelId: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
@@ -185,7 +183,7 @@ describe('Worker Lambda Handler', () => {
       expect(completeMessage).toBeDefined()
     })
 
-    test('handles stream errors gracefully', async () => {
+    test('sends error event to client on stream error and still completes', async () => {
       const streamEvents = [
         { contentBlockDelta: { delta: { text: 'Partial' } } },
         { modelStreamErrorException: { message: 'Model error' } },
@@ -195,7 +193,138 @@ describe('Worker Lambda Handler', () => {
         stream: createMockStream(streamEvents),
       })
 
-      await expect(handler(createSQSEvent('Test prompt'))).rejects.toThrow('Model error')
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('Model error')
+
+      const completeMessage = allMessages.find((msg) => msg.event === 'complete')
+      expect(completeMessage).toBeDefined()
+    })
+
+    test('sends error event on internalServerException', async () => {
+      const streamEvents = [{ internalServerException: { message: 'Internal error' } }]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('Internal error')
+    })
+  })
+
+  describe('Conversation History', () => {
+    test('includes conversation history in messages when provided', async () => {
+      const streamEvents = [
+        { contentBlockDelta: { delta: { text: 'Response' } } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      const messages = [
+        { role: 'user', content: 'Hello' },
+        { role: 'assistant', content: 'Hi there!' },
+      ]
+
+      await handler(createSQSEvent('Follow up question', 'test-connection-id', { messages }))
+
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
+      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+
+      expect(callArgs.messages).toHaveLength(2)
+      expect(callArgs.messages[0].role).toBe('user')
+      // Last user message gets replaced with composed prompt (system + user)
+      expect(callArgs.messages[0].content[0].text).toContain('You are helpful.')
+      expect(callArgs.messages[0].content[0].text).toContain('Follow up question')
+      expect(callArgs.messages[1].role).toBe('assistant')
+      expect(callArgs.messages[1].content[0].text).toBe('Hi there!')
+    })
+
+    test('replaces last user message with composed prompt', async () => {
+      const streamEvents = [
+        { contentBlockDelta: { delta: { text: 'Response' } } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      const messages = [
+        { role: 'user', content: 'First question' },
+        { role: 'assistant', content: 'First answer' },
+        { role: 'user', content: 'Second question' },
+      ]
+
+      await handler(createSQSEvent('Second question', 'test-connection-id', { messages }))
+
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
+      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+
+      expect(callArgs.messages).toHaveLength(3)
+      // Last user message should contain the system prompt
+      expect(callArgs.messages[2].content[0].text).toContain('You are helpful.')
+    })
+
+    test('sends single message when no history provided', async () => {
+      const streamEvents = [
+        { contentBlockDelta: { delta: { text: 'Response' } } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      await handler(createSQSEvent('Hello'))
+
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
+      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+
+      expect(callArgs.messages).toHaveLength(1)
+      expect(callArgs.messages[0].role).toBe('user')
+    })
+
+    test('filters out malformed messages from history', async () => {
+      const streamEvents = [
+        { contentBlockDelta: { delta: { text: 'Response' } } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      const messages = [
+        { role: 'user', content: 'Good message' },
+        null,
+        { role: 'assistant', content: '' },
+        { role: 'user', content: 'Another good one' },
+      ]
+
+      await handler(createSQSEvent('Follow up', 'test-connection-id', { messages }))
+
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
+      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+
+      // null and empty content should be filtered out
+      expect(callArgs.messages).toHaveLength(2)
     })
   })
 
@@ -224,11 +353,11 @@ describe('Worker Lambda Handler', () => {
         stream: createMockStream(streamEvents),
       })
 
-      // Re-import to clear config cache
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
 
-      const { ConverseStreamCommand } = await import('@aws-sdk/client-bedrock-runtime')
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseStreamCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           additionalModelRequestFields: {
@@ -260,10 +389,11 @@ describe('Worker Lambda Handler', () => {
         stream: createMockStream(streamEvents),
       })
 
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
 
-      const { ConverseStreamCommand } = await import('@aws-sdk/client-bedrock-runtime')
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseStreamCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           modelId: 'amazon.titan-text-express-v1',
@@ -292,10 +422,11 @@ describe('Worker Lambda Handler', () => {
         stream: createMockStream(streamEvents),
       })
 
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
 
-      const { ConverseStreamCommand } = await import('@aws-sdk/client-bedrock-runtime')
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseStreamCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           modelId: 'meta.llama3-70b-instruct-v1:0',
@@ -336,8 +467,9 @@ describe('Worker Lambda Handler', () => {
         stream: createMockStream(streamEvents),
       })
 
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test query'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test query'))
 
       // Verify KB retrieval was called
       expect(mockRetrieveSend).toHaveBeenCalled()
@@ -371,10 +503,11 @@ describe('Worker Lambda Handler', () => {
         stream: createMockStream(streamEvents),
       })
 
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
 
-      const { ConverseStreamCommand } = await import('@aws-sdk/client-bedrock-runtime')
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseStreamCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           system: expect.arrayContaining([
@@ -403,8 +536,9 @@ describe('Worker Lambda Handler', () => {
         },
       })
 
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
 
       // Should NOT call Bedrock in mock mode
       expect(mockConverseStreamSend).not.toHaveBeenCalled()
@@ -433,11 +567,12 @@ describe('Worker Lambda Handler', () => {
         },
       })
 
-      const module = await import('../index.js')
-      await module.handler(createSQSEvent('Test'))
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
 
       // Verify ConverseCommand (non-streaming) was called
-      const { ConverseCommand } = await import('@aws-sdk/client-bedrock-runtime')
+      const { ConverseCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseCommand).toHaveBeenCalled()
 
       // Clean up

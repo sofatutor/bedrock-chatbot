@@ -195,6 +195,11 @@
             } else if (typ === 'delta') {
               if (!state.current) state.current = addBubble('', 'assistant')
               state.current.textContent += data.content
+            } else if (typ === 'error') {
+              const errorBubble = addBubble('\u26a0\ufe0f Error: ' + (data.message || 'An error occurred'), 'assistant')
+              errorBubble.style.borderLeft = '3px solid #ef4444'
+              errorBubble.style.background = '#1f1414'
+              state.current = null
             } else if (typ === 'complete') {
               state.current = null
             }

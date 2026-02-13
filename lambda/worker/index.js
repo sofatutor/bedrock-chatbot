@@ -63,6 +63,39 @@ async function getConfig() {
   return defaultConfig
 }
 
+function normalizeMessagesToConverseFormat(messages, systemPrompt, userPrompt) {
+  const normalized = Array.isArray(messages)
+    ? messages
+        .filter((m) => m && typeof m === 'object')
+        .map((m) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: [{ text: String(m.content || '') }],
+        }))
+        .filter((m) => m.content[0].text.trim().length > 0)
+    : []
+
+  const composedUser = `${systemPrompt}\n\n${userPrompt}`
+
+  if (normalized.length > 0) {
+    let lastUserIdx = -1
+    for (let i = normalized.length - 1; i >= 0; i--) {
+      if (normalized[i].role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+    if (lastUserIdx >= 0) {
+      normalized[lastUserIdx].content = [{ text: composedUser }]
+    } else {
+      normalized.push({ role: 'user', content: [{ text: composedUser }] })
+    }
+  }
+
+  return normalized.length > 0
+    ? normalized
+    : [{ role: 'user', content: [{ text: composedUser }] }]
+}
+
 async function streamMock({ connectionId, prompt }) {
   const demo = `Here's a streaming demo for your prompt: "${prompt}"\n\n- This is a mock response.\n- It streams tokens over WebSocket.\n- Deployed via CDK, served via CloudFront.\n\nEnjoy the demo!`
   let seq = 0
@@ -137,7 +170,7 @@ exports.handler = async (event) => {
     // Build Converse API parameters (model-agnostic format)
     const converseParams = {
       modelId: config.model.modelId,
-      messages: [{ role: 'user', content: [{ text: user }] }],
+      messages: normalizeMessagesToConverseFormat(job.messages, system, user),
       system: [{ text: system }],
       inferenceConfig: {
         maxTokens: config.generation.maxTokens,
@@ -170,15 +203,23 @@ exports.handler = async (event) => {
             }),
           )
         }
-        // Handle message stop event (end of response)
-        if (evt.messageStop) {
-          break
-        }
-        // Handle errors in stream
+        // Handle errors in stream (check before messageStop)
         if (evt.internalServerException || evt.modelStreamErrorException) {
           const error = evt.internalServerException || evt.modelStreamErrorException
           console.log('Stream error:', error.message)
-          throw new Error(error.message || 'Stream error')
+          await ws.send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(
+                JSON.stringify({ event: 'error', message: error.message || 'Stream error occurred' }),
+              ),
+            }),
+          )
+          break
+        }
+        // Handle message stop event (end of response)
+        if (evt.messageStop) {
+          break
         }
       }
 
