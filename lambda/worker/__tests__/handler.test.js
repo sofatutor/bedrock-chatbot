@@ -224,6 +224,92 @@ describe('Worker Lambda Handler', () => {
       expect(errorMessage).toBeDefined()
       expect(errorMessage.message).toBe('Internal error')
     })
+
+    test('sends user-friendly error on ThrottlingException', async () => {
+      const throttleError = new Error('Rate exceeded')
+      throttleError.name = 'ThrottlingException'
+      mockConverseStreamSend.mockRejectedValue(throttleError)
+
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('Service is temporarily busy. Please try again in a moment.')
+
+      const completeMessage = allMessages.find((msg) => msg.event === 'complete')
+      expect(completeMessage).toBeDefined()
+    })
+
+    test('sends user-friendly error on AccessDeniedException', async () => {
+      const accessError = new Error('Access denied')
+      accessError.name = 'AccessDeniedException'
+      mockConverseStreamSend.mockRejectedValue(accessError)
+
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('Access denied. The model may not be enabled in your account.')
+    })
+
+    test('sends user-friendly error on ResourceNotFoundException', async () => {
+      const notFoundError = new Error('Model not found')
+      notFoundError.name = 'ResourceNotFoundException'
+      mockConverseStreamSend.mockRejectedValue(notFoundError)
+
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('The requested model or resource was not found.')
+    })
+
+    test('sends generic error message for unknown error types', async () => {
+      const unknownError = new Error('Something weird happened')
+      unknownError.name = 'SomethingWeirdException'
+      mockConverseStreamSend.mockRejectedValue(unknownError)
+
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('An error occurred: Something weird happened')
+    })
+
+    test('truncates very long error messages', async () => {
+      const longMessage = 'A'.repeat(300)
+      const longError = new Error(longMessage)
+      longError.name = 'UnknownException'
+      mockConverseStreamSend.mockRejectedValue(longError)
+
+      await handler(createSQSEvent('Test prompt'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      // "An error occurred: " (19) + 200 chars + "..." (3) = 222 max
+      expect(errorMessage.message.length).toBeLessThanOrEqual(225)
+      expect(errorMessage.message).toContain('...')
+    })
   })
 
   describe('Conversation History', () => {
@@ -475,6 +561,100 @@ describe('Worker Lambda Handler', () => {
       expect(mockRetrieveSend).toHaveBeenCalled()
     })
 
+    test('sends warning to client on KB retrieval failure and continues', async () => {
+      const kbConfig = {
+        ...defaultConfig,
+        knowledgeBase: {
+          enabled: true,
+          knowledgeBaseId: 'test-kb-id',
+        },
+      }
+
+      mockSSMSend.mockResolvedValue({
+        Parameter: {
+          Value: JSON.stringify(kbConfig),
+        },
+      })
+
+      // KB retrieval fails
+      const kbError = new Error('Knowledge Base not found')
+      mockRetrieveSend.mockRejectedValue(kbError)
+
+      const streamEvents = [
+        { contentBlockDelta: { delta: { text: 'Response without context' } } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test query'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      // Should have sent a warning about KB failure
+      const warningMessage = allMessages.find((msg) => msg.event === 'warning')
+      expect(warningMessage).toBeDefined()
+      expect(warningMessage.message).toContain('Knowledge Base retrieval failed')
+      expect(warningMessage.message).toContain('Knowledge Base not found')
+
+      // Should still proceed with the response
+      const deltaMessage = allMessages.find((msg) => msg.event === 'delta')
+      expect(deltaMessage).toBeDefined()
+
+      const completeMessage = allMessages.find((msg) => msg.event === 'complete')
+      expect(completeMessage).toBeDefined()
+    })
+
+    test('uses systemWithoutContext prompt when KB retrieval fails', async () => {
+      const kbConfig = {
+        ...defaultConfig,
+        knowledgeBase: {
+          enabled: true,
+          knowledgeBaseId: 'test-kb-id',
+        },
+      }
+
+      mockSSMSend.mockResolvedValue({
+        Parameter: {
+          Value: JSON.stringify(kbConfig),
+        },
+      })
+
+      // KB retrieval fails
+      mockRetrieveSend.mockRejectedValue(new Error('KB Error'))
+
+      const streamEvents = [
+        { contentBlockDelta: { delta: { text: 'Response' } } },
+        { messageStop: { stopReason: 'end_turn' } },
+      ]
+
+      mockConverseStreamSend.mockResolvedValue({
+        stream: createMockStream(streamEvents),
+      })
+
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
+
+      // Should use systemWithoutContext since KB retrieval failed
+      const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
+      expect(ConverseStreamCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          system: expect.arrayContaining([
+            expect.objectContaining({
+              text: 'You are helpful.',
+            }),
+          ]),
+        }),
+      )
+    })
+
     test('uses systemWithContext prompt when KB retrieval succeeds', async () => {
       const kbConfig = {
         ...defaultConfig,
@@ -574,6 +754,55 @@ describe('Worker Lambda Handler', () => {
       // Verify ConverseCommand (non-streaming) was called
       const { ConverseCommand } = require('@aws-sdk/client-bedrock-runtime')
       expect(ConverseCommand).toHaveBeenCalled()
+
+      // Clean up
+      delete process.env.INFERENCE_PROFILE_ARN
+    })
+
+    test('sends error to client when inference profile API call fails', async () => {
+      process.env.INFERENCE_PROFILE_ARN = 'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+
+      const apiError = new Error('Model quota exceeded')
+      apiError.name = 'ServiceQuotaExceededException'
+      mockConverseSend.mockRejectedValue(apiError)
+
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('Usage limit exceeded. Please try again later.')
+
+      const completeMessage = allMessages.find((msg) => msg.event === 'complete')
+      expect(completeMessage).toBeDefined()
+
+      // Clean up
+      delete process.env.INFERENCE_PROFILE_ARN
+    })
+
+    test('sends error on inference profile timeout', async () => {
+      process.env.INFERENCE_PROFILE_ARN = 'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+
+      const timeoutError = new Error('Request timed out')
+      timeoutError.name = 'ModelTimeoutException'
+      mockConverseSend.mockRejectedValue(timeoutError)
+
+      jest.resetModules()
+      const { handler: h } = require('../index')
+      await h(createSQSEvent('Test'))
+
+      const allMessages = mockPostToConnection.mock.calls.map((call) =>
+        JSON.parse(Buffer.from(call[0].Data).toString()),
+      )
+
+      const errorMessage = allMessages.find((msg) => msg.event === 'error')
+      expect(errorMessage).toBeDefined()
+      expect(errorMessage.message).toBe('The request timed out. Please try with a shorter prompt.')
 
       // Clean up
       delete process.env.INFERENCE_PROFILE_ARN
