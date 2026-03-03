@@ -19,6 +19,9 @@ const bedrock = new BedrockRuntimeClient({})
 const agentRt = new BedrockAgentRuntimeClient({})
 const ssm = new SSMClient({})
 
+// Models known not to support ConverseStream (persists across warm invocations)
+const nonStreamingModels = new Set()
+
 // Configuration cache (with TTL)
 let configCache = null
 let configCacheTime = 0
@@ -254,9 +257,14 @@ exports.handler = async (event) => {
       ? config.prompts.contextTemplate.replace('{context}', ctx).replace('{prompt}', prompt)
       : prompt
 
+    // Resolve effective model ID: inference profile ARN takes precedence
+    const effectiveModelId =
+      (process.env.INFERENCE_PROFILE_ARN && process.env.INFERENCE_PROFILE_ARN.trim()) ||
+      config.model.modelId
+
     // Build Converse API parameters (model-agnostic format)
     const converseParams = {
-      modelId: config.model.modelId,
+      modelId: effectiveModelId,
       messages: normalizeMessagesToConverseFormat(job.messages, system, user),
       system: [{ text: system }],
       inferenceConfig: {
@@ -271,17 +279,15 @@ exports.handler = async (event) => {
       converseParams.additionalModelRequestFields = config.modelSpecific
     }
 
-    const useProfile = process.env.INFERENCE_PROFILE_ARN && process.env.INFERENCE_PROFILE_ARN.trim()
+    let responded = false
 
-    if (!useProfile) {
-      // Streaming with ConverseStream API (model-agnostic)
+    // Try streaming first (unless this model is known not to support it)
+    if (!nonStreamingModels.has(effectiveModelId)) {
       try {
-        const cmd = new ConverseStreamCommand(converseParams)
-        const resp = await bedrock.send(cmd)
+        const resp = await bedrock.send(new ConverseStreamCommand(converseParams))
         let seq = 0
 
         for await (const evt of resp.stream) {
-          // Handle content block delta events (streaming text)
           if (evt.contentBlockDelta?.delta?.text) {
             const delta = evt.contentBlockDelta.delta.text
             await ws.send(
@@ -291,18 +297,12 @@ exports.handler = async (event) => {
               }),
             )
           }
-          // Handle errors in stream (check before messageStop)
           if (evt.internalServerException || evt.modelStreamErrorException) {
             const error = evt.internalServerException || evt.modelStreamErrorException
             console.error('Stream error:', error.message)
-            await sendErrorToClient(
-              connectionId,
-              error.message || 'Stream error occurred',
-              false, // Don't send complete yet, we'll send it below
-            )
+            await sendErrorToClient(connectionId, error.message || 'Stream error occurred', false)
             break
           }
-          // Handle message stop event (end of response)
           if (evt.messageStop) {
             break
           }
@@ -314,43 +314,46 @@ exports.handler = async (event) => {
             Data: Buffer.from(JSON.stringify({ event: 'complete' })),
           }),
         )
+        responded = true
       } catch (apiError) {
-        // Handle API call failures (authentication, throttling, model not found, etc.)
-        console.error('Bedrock ConverseStream API call failed:', apiError.message)
-        const userMessage = getClientFriendlyErrorMessage(apiError)
-        await sendErrorToClient(connectionId, userMessage)
-      }
-    } else {
-      // Fallback: non-streaming Converse API for inference profiles
-      try {
-        // Use the inference profile ARN as the modelId
-        const profileParams = {
-          ...converseParams,
-          modelId: process.env.INFERENCE_PROFILE_ARN,
+        const isStreamingUnsupported =
+          apiError.name === 'ValidationException' &&
+          apiError.message?.toLowerCase().includes('model identifier')
+        if (isStreamingUnsupported) {
+          nonStreamingModels.add(effectiveModelId)
+          console.log(
+            `Model ${effectiveModelId} does not support streaming, falling back to Converse`,
+          )
+        } else {
+          console.error('Bedrock ConverseStream API call failed:', apiError.message)
+          await sendErrorToClient(connectionId, getClientFriendlyErrorMessage(apiError))
+          responded = true
         }
+      }
+    }
 
-        const resp = await bedrock.send(new ConverseCommand(profileParams))
+    // Non-streaming fallback
+    if (!responded) {
+      try {
+        const resp = await bedrock.send(new ConverseCommand(converseParams))
 
-        // Extract text from the response
         let out = ''
         if (resp.output?.message?.content) {
           for (const block of resp.output.message.content) {
-            if (block.text) {
-              out += block.text
-            }
+            if (block.text) out += block.text
           }
         }
 
-        // Stream the output in small chunks to client
+        // Send in word-sized chunks for a natural streaming feel
+        const chunks = out.match(/\S+\s*/g) || [out]
         let seq = 0
-        for (const ch of out.split('')) {
+        for (const chunk of chunks) {
           await ws.send(
             new PostToConnectionCommand({
               ConnectionId: connectionId,
-              Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: ch })),
+              Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: chunk })),
             }),
           )
-          await new Promise((r) => setTimeout(r, 5))
         }
         await ws.send(
           new PostToConnectionCommand({
@@ -359,10 +362,8 @@ exports.handler = async (event) => {
           }),
         )
       } catch (apiError) {
-        // Handle API call failures (authentication, throttling, model not found, etc.)
         console.error('Bedrock Converse API call failed:', apiError.message)
-        const userMessage = getClientFriendlyErrorMessage(apiError)
-        await sendErrorToClient(connectionId, userMessage)
+        await sendErrorToClient(connectionId, getClientFriendlyErrorMessage(apiError))
       }
     }
   }
