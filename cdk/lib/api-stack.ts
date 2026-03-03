@@ -16,6 +16,7 @@ import { join } from 'path'
 import { defaultConfig } from '../../lambda/config-schema.js'
 
 export interface ApiProps extends StackProps {
+  resourcePrefix: string
   sessionTable: Table
   policyTable: Table
   userPool: IUserPool
@@ -39,11 +40,13 @@ export class ApiStack extends Stack {
     })
 
     const q = new Queue(this, 'RequestsQ', {
+      queueName: `${props.resourcePrefix}RequestsQueue`,
       encryption: QueueEncryption.KMS_MANAGED,
       visibilityTimeout: Duration.minutes(5),
     })
 
     const onConnect = new NodejsFunction(this, 'WsOnConnect', {
+      functionName: `${props.resourcePrefix}WsOnConnect`,
       runtime: Runtime.NODEJS_20_X,
       entry: join(__dirname, '../../lambda/websocket/onconnect/index.js'),
       handler: 'handler',
@@ -52,6 +55,7 @@ export class ApiStack extends Stack {
       bundling: { minify: true, externalModules: [] },
     })
     const onDisconnect = new NodejsFunction(this, 'WsOnDisconnect', {
+      functionName: `${props.resourcePrefix}WsOnDisconnect`,
       runtime: Runtime.NODEJS_20_X,
       entry: join(__dirname, '../../lambda/websocket/ondisconnect/index.js'),
       handler: 'handler',
@@ -72,6 +76,7 @@ export class ApiStack extends Stack {
     )
 
     const defaultFn = new NodejsFunction(this, 'WsDefault', {
+      functionName: `${props.resourcePrefix}WsDefault`,
       runtime: Runtime.NODEJS_20_X,
       entry: join(__dirname, '../../lambda/websocket/default/index.js'),
       handler: 'handler',
@@ -100,6 +105,7 @@ export class ApiStack extends Stack {
     })
 
     const enqueueFn = new NodejsFunction(this, 'EnqueueFn', {
+      functionName: `${props.resourcePrefix}EnqueueFn`,
       runtime: Runtime.NODEJS_20_X,
       entry: join(__dirname, '../../lambda/enqueue/index.js'),
       handler: 'handler',
@@ -127,6 +133,7 @@ export class ApiStack extends Stack {
     })
 
     const workerFn = new NodejsFunction(this, 'WorkerFn', {
+      functionName: `${props.resourcePrefix}WorkerFn`,
       runtime: Runtime.NODEJS_20_X,
       entry: join(__dirname, '../../lambda/worker/index.js'),
       handler: 'handler',
