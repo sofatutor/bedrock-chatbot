@@ -88,12 +88,94 @@ export async function updateConfig(configValue) {
 }
 
 /**
- * Validate configuration JSON
+ * Known model provider patterns (for informational warnings only)
  */
-export function validateConfig(config) {
+const KNOWN_PROVIDER_PATTERNS = {
+  anthropic: /^anthropic\./,
+  amazon: /^amazon\./,
+  meta: /^meta\./,
+  cohere: /^cohere\./,
+  mistral: /^mistral\./,
+  ai21: /^ai21\./,
+  deepseek: /^deepseek\./,
+  stability: /^stability\./,
+}
+
+/**
+ * Basic Bedrock model ID pattern: provider.model-name with optional version
+ * Examples: anthropic.claude-3, amazon.titan-text-v1, custom.my-model:0
+ */
+const BEDROCK_MODEL_ID_PATTERN = /^[a-z0-9-]+\.[a-z0-9-]+/i
+
+/**
+ * Validate model ID format
+ * @param {string} modelId - The model ID to validate
+ * @returns {{error: string|null, warning: string|null}} Validation result
+ */
+export function validateModelId(modelId) {
+  if (!modelId || typeof modelId !== 'string') {
+    return { error: 'modelId must be a non-empty string', warning: null }
+  }
+
+  // Check basic Bedrock model ID structure (provider.model-name)
+  if (!BEDROCK_MODEL_ID_PATTERN.test(modelId)) {
+    return {
+      error: `Invalid modelId format: ${modelId}. Expected format: provider.model-name (e.g., anthropic.claude-3-5-sonnet-v1:0)`,
+      warning: null,
+    }
+  }
+
+  // Check if it's a known provider (warning only, not an error)
+  const isKnownProvider = Object.values(KNOWN_PROVIDER_PATTERNS).some((pattern) => pattern.test(modelId))
+  if (!isKnownProvider) {
+    return {
+      error: null,
+      warning: `Unknown model provider in modelId: ${modelId}. This may work if the Converse API supports it. Known providers: anthropic, amazon, meta, cohere, mistral, ai21, deepseek, stability`,
+    }
+  }
+
+  return { error: null, warning: null }
+}
+
+/**
+ * Validate generation parameters
+ * @param {Object} config - The configuration object
+ * @returns {string[]} Array of error messages
+ */
+export function validateGenerationParams(config) {
+  const errors = []
+
+  if (!config.generation) {
+    return errors // Will be caught by required field validation
+  }
+
+  const { temperature, topP, maxTokens } = config.generation
+
+  if (typeof temperature === 'number' && (temperature < 0 || temperature > 1)) {
+    errors.push('generation.temperature must be between 0 and 1')
+  }
+
+  if (typeof topP === 'number' && (topP < 0 || topP > 1)) {
+    errors.push('generation.topP must be between 0 and 1')
+  }
+
+  if (typeof maxTokens === 'number' && maxTokens < 1) {
+    errors.push('generation.maxTokens must be at least 1')
+  }
+
+  return errors
+}
+
+/**
+ * Validate configuration JSON
+ * @param {Object} config - Configuration object to validate
+ * @param {Object} options - Validation options
+ * @param {boolean} options.includeWarnings - If true, returns {errors, warnings} object
+ * @returns {string[]|{errors: string[], warnings: string[]}} Validation errors (and warnings if requested)
+ */
+export function validateConfig(config, options = {}) {
   const requiredFields = [
     { path: 'model.modelId', type: 'string' },
-    { path: 'model.anthropicVersion', type: 'string' },
     { path: 'knowledgeBase.enabled', type: 'boolean' },
     { path: 'knowledgeBase.knowledgeBaseId', type: 'string' },
     { path: 'prompts.systemWithContext', type: 'string' },
@@ -104,11 +186,12 @@ export function validateConfig(config) {
     { path: 'generation.maxTokens', type: 'number' },
     { path: 'generation.temperature', type: 'number' },
     { path: 'generation.topP', type: 'number' },
-    { path: 'generation.topK', type: 'number' },
   ]
 
   const errors = []
+  const warnings = []
 
+  // Validate required fields and types
   for (const field of requiredFields) {
     const value = getNestedValue(config, field.path)
     if (value === undefined) {
@@ -118,6 +201,26 @@ export function validateConfig(config) {
     }
   }
 
+  // Validate model ID format (only if modelId exists and is a string)
+  const modelId = getNestedValue(config, 'model.modelId')
+  if (modelId && typeof modelId === 'string') {
+    const modelValidation = validateModelId(modelId)
+    if (modelValidation.error) {
+      errors.push(modelValidation.error)
+    }
+    if (modelValidation.warning) {
+      warnings.push(modelValidation.warning)
+    }
+  }
+
+  // Validate generation parameter ranges
+  const paramErrors = validateGenerationParams(config)
+  errors.push(...paramErrors)
+
+  // Return format depends on options
+  if (options.includeWarnings) {
+    return { errors, warnings }
+  }
   return errors
 }
 
@@ -178,7 +281,7 @@ export async function handleUpdate(filePath) {
     spinner.succeed('Valid JSON')
 
     spinner.start('Validating configuration schema...')
-    const errors = validateConfig(config)
+    const { errors, warnings } = validateConfig(config, { includeWarnings: true })
     if (errors.length > 0) {
       spinner.fail('Configuration validation failed')
       console.error(chalk.red('\nValidation errors:'))
@@ -186,6 +289,12 @@ export async function handleUpdate(filePath) {
       process.exit(1)
     }
     spinner.succeed('Configuration is valid')
+
+    // Show warnings but don't fail
+    if (warnings.length > 0) {
+      console.log(chalk.yellow('\nWarnings:'))
+      warnings.forEach((warn) => console.log(chalk.yellow(`  ⚠ ${warn}`)))
+    }
 
     await updateConfig(config)
     console.log(chalk.green('\n✓ Configuration updated successfully'))
@@ -217,7 +326,7 @@ export async function handleSet(key, value) {
     setNestedValue(config, key, parsedValue)
 
     // Validate after setting
-    const errors = validateConfig(config)
+    const { errors, warnings } = validateConfig(config, { includeWarnings: true })
     if (errors.length > 0) {
       spinner.fail('Invalid configuration after update')
       console.error(chalk.red('\nValidation errors:'))
@@ -226,6 +335,13 @@ export async function handleSet(key, value) {
     }
 
     spinner.stop()
+
+    // Show warnings but don't fail
+    if (warnings.length > 0) {
+      console.log(chalk.yellow('\nWarnings:'))
+      warnings.forEach((warn) => console.log(chalk.yellow(`  ⚠ ${warn}`)))
+    }
+
     await updateConfig(config)
     console.log(
       chalk.green(`\n✓ Set ${chalk.cyan(key)} = ${chalk.yellow(JSON.stringify(parsedValue))}`),
@@ -257,7 +373,7 @@ export async function handleValidate(filePath) {
     spinner.succeed('Valid JSON')
 
     spinner.start('Validating configuration schema...')
-    const errors = validateConfig(config)
+    const { errors, warnings } = validateConfig(config, { includeWarnings: true })
     if (errors.length > 0) {
       spinner.fail('Configuration validation failed')
       console.error(chalk.red('\nValidation errors:'))
@@ -265,6 +381,12 @@ export async function handleValidate(filePath) {
       process.exit(1)
     }
     spinner.succeed('Configuration is valid')
+
+    // Show warnings but don't fail
+    if (warnings.length > 0) {
+      console.log(chalk.yellow('\nWarnings:'))
+      warnings.forEach((warn) => console.log(chalk.yellow(`  ⚠ ${warn}`)))
+    }
 
     console.log(chalk.green('\n✓ Configuration file is valid'))
   } catch (error) {

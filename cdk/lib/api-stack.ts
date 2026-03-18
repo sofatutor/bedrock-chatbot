@@ -168,8 +168,13 @@ export class ApiStack extends Stack {
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: [
+          // Model-agnostic Converse API (preferred)
+          'bedrock:Converse',
+          'bedrock:ConverseStream',
+          // Legacy InvokeModel APIs (for backwards compatibility)
           'bedrock:InvokeModel',
           'bedrock:InvokeModelWithResponseStream',
+          // Knowledge Base retrieval
           'bedrock:Retrieve',
           'bedrock:RetrieveAndGenerate',
           'bedrock:RetrieveAndGenerateStream',

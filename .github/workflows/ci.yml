@@ -35,6 +35,9 @@ jobs:
           - name: CLI
             path: tools/cli
             test-command: npm test
+          - name: Worker Lambda
+            path: lambda/worker
+            test-command: npx jest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

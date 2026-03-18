@@ -4,12 +4,9 @@ const {
 } = require('@aws-sdk/client-apigatewaymanagementapi')
 const {
   BedrockRuntimeClient,
-  InvokeModelWithResponseStreamCommand,
+  ConverseStreamCommand,
+  ConverseCommand,
 } = require('@aws-sdk/client-bedrock-runtime')
-const { SignatureV4 } = require('@aws-sdk/signature-v4')
-const { Sha256 } = require('@aws-crypto/sha256-js')
-const { HttpRequest } = require('@aws-sdk/protocol-http')
-const { defaultProvider } = require('@aws-sdk/credential-provider-node')
 const {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
@@ -21,6 +18,9 @@ const ws = new ApiGatewayManagementApiClient({ endpoint: process.env.WS_API_ENDP
 const bedrock = new BedrockRuntimeClient({})
 const agentRt = new BedrockAgentRuntimeClient({})
 const ssm = new SSMClient({})
+
+// Models known not to support ConverseStream (persists across warm invocations)
+const nonStreamingModels = new Set()
 
 // Configuration cache (with TTL)
 let configCache = null
@@ -64,6 +64,121 @@ async function getConfig() {
   configCache = defaultConfig
   configCacheTime = now
   return defaultConfig
+}
+
+function normalizeMessagesToConverseFormat(messages, systemPrompt, userPrompt) {
+  const normalized = Array.isArray(messages)
+    ? messages
+        .filter((m) => m && typeof m === 'object')
+        .map((m) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: [{ text: String(m.content || '') }],
+        }))
+        .filter((m) => m.content[0].text.trim().length > 0)
+    : []
+
+  const composedUser = `${systemPrompt}\n\n${userPrompt}`
+
+  if (normalized.length > 0) {
+    let lastUserIdx = -1
+    for (let i = normalized.length - 1; i >= 0; i--) {
+      if (normalized[i].role === 'user') {
+        lastUserIdx = i
+        break
+      }
+    }
+    if (lastUserIdx >= 0) {
+      normalized[lastUserIdx].content = [{ text: composedUser }]
+    } else {
+      normalized.push({ role: 'user', content: [{ text: composedUser }] })
+    }
+  }
+
+  return normalized.length > 0
+    ? normalized
+    : [{ role: 'user', content: [{ text: composedUser }] }]
+}
+
+/**
+ * Sends an error event to the WebSocket client
+ * @param {string} connectionId - WebSocket connection ID
+ * @param {string} message - Error message to send
+ * @param {boolean} sendComplete - Whether to also send a complete event (defaults to true)
+ */
+async function sendErrorToClient(connectionId, message, sendComplete = true) {
+  try {
+    await ws.send(
+      new PostToConnectionCommand({
+        ConnectionId: connectionId,
+        Data: Buffer.from(JSON.stringify({ event: 'error', message })),
+      }),
+    )
+    if (sendComplete) {
+      await ws.send(
+        new PostToConnectionCommand({
+          ConnectionId: connectionId,
+          Data: Buffer.from(JSON.stringify({ event: 'complete' })),
+        }),
+      )
+    }
+  } catch (wsError) {
+    console.error('Failed to send error to client:', wsError.message)
+  }
+}
+
+/**
+ * Sends a warning event to the WebSocket client (non-fatal)
+ * @param {string} connectionId - WebSocket connection ID
+ * @param {string} message - Warning message to send
+ */
+async function sendWarningToClient(connectionId, message) {
+  try {
+    await ws.send(
+      new PostToConnectionCommand({
+        ConnectionId: connectionId,
+        Data: Buffer.from(JSON.stringify({ event: 'warning', message })),
+      }),
+    )
+  } catch (wsError) {
+    console.error('Failed to send warning to client:', wsError.message)
+  }
+}
+
+/**
+ * Converts AWS SDK errors to user-friendly messages
+ * @param {Error} error - The error from AWS SDK
+ * @returns {string} User-friendly error message
+ */
+function getClientFriendlyErrorMessage(error) {
+  const errorName = error.name || ''
+  const errorMessage = error.message || 'An unknown error occurred'
+
+  // Map common Bedrock errors to user-friendly messages
+  const errorMappings = {
+    ThrottlingException: 'Service is temporarily busy. Please try again in a moment.',
+    ServiceQuotaExceededException: 'Usage limit exceeded. Please try again later.',
+    AccessDeniedException: 'Access denied. The model may not be enabled in your account.',
+    ValidationException: `Invalid request: ${errorMessage}`,
+    ResourceNotFoundException: 'The requested model or resource was not found.',
+    ModelNotReadyException: 'The model is not ready. Please try again in a moment.',
+    ModelTimeoutException: 'The request timed out. Please try with a shorter prompt.',
+    ModelErrorException: 'The model encountered an error processing your request.',
+    ServiceUnavailableException: 'Service temporarily unavailable. Please try again later.',
+    InternalServerException: 'An internal error occurred. Please try again.',
+  }
+
+  // Check for known error types
+  for (const [errorType, friendlyMessage] of Object.entries(errorMappings)) {
+    if (errorName.includes(errorType) || errorMessage.includes(errorType)) {
+      return friendlyMessage
+    }
+  }
+
+  // For unrecognized errors, provide a generic message with some detail
+  if (errorMessage.length > 200) {
+    return `An error occurred: ${errorMessage.slice(0, 200)}...`
+  }
+  return `An error occurred: ${errorMessage}`
 }
 
 async function streamMock({ connectionId, prompt }) {
@@ -126,8 +241,13 @@ exports.handler = async (event) => {
             (x, i) => `[S${i + 1}] ${x.content?.text?.slice(0, config.retrieval.maxContextLength)}`,
           )
           .join('\n')
-      } catch (e) {
-        console.log('KB retrieve failed', e)
+      } catch (kbError) {
+        console.error('KB retrieve failed:', kbError.message)
+        // Notify client about KB failure (non-fatal, continue without context)
+        await sendWarningToClient(
+          connectionId,
+          `Knowledge Base retrieval failed: ${kbError.message}. Proceeding without context.`,
+        )
       }
     }
 
@@ -137,115 +257,114 @@ exports.handler = async (event) => {
       ? config.prompts.contextTemplate.replace('{context}', ctx).replace('{prompt}', prompt)
       : prompt
 
-    const body = {
-      anthropic_version: config.model.anthropicVersion,
-      max_tokens: config.generation.maxTokens,
-      temperature: config.generation.temperature,
-      top_p: config.generation.topP,
-      top_k: config.generation.topK,
-      messages: [{ role: 'user', content: `${system}\n\n${user}` }],
+    // Resolve effective model ID: inference profile ARN takes precedence
+    const effectiveModelId =
+      (process.env.INFERENCE_PROFILE_ARN && process.env.INFERENCE_PROFILE_ARN.trim()) ||
+      config.model.modelId
+
+    // Build Converse API parameters (model-agnostic format)
+    const converseParams = {
+      modelId: effectiveModelId,
+      messages: normalizeMessagesToConverseFormat(job.messages, system, user),
+      system: [{ text: system }],
+      inferenceConfig: {
+        maxTokens: config.generation.maxTokens,
+        temperature: config.generation.temperature,
+        topP: config.generation.topP,
+      },
     }
 
-    const base = {
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify(body),
+    // Add model-specific parameters if configured
+    if (config.modelSpecific && Object.keys(config.modelSpecific).length > 0) {
+      converseParams.additionalModelRequestFields = config.modelSpecific
     }
-    const useProfile = process.env.INFERENCE_PROFILE_ARN && process.env.INFERENCE_PROFILE_ARN.trim()
 
-    if (!useProfile) {
-      // Regular streaming with modelId
-      const cmd = new InvokeModelWithResponseStreamCommand({
-        ...base,
-        modelId: config.model.modelId,
-      })
-      const resp = await bedrock.send(cmd)
-      let seq = 0
-      for await (const evt of resp.body) {
-        if (evt.chunk && evt.chunk.bytes) {
-          try {
-            const payload = JSON.parse(Buffer.from(evt.chunk.bytes).toString('utf-8'))
-            const delta = payload.delta?.text || payload.output_text || ''
-            if (delta) {
-              await ws.send(
-                new PostToConnectionCommand({
-                  ConnectionId: connectionId,
-                  Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: delta })),
-                }),
-              )
-            }
-          } catch (e) {
-            console.log('stream parse error', e)
+    let responded = false
+
+    // Try streaming first (unless this model is known not to support it)
+    if (!nonStreamingModels.has(effectiveModelId)) {
+      try {
+        const resp = await bedrock.send(new ConverseStreamCommand(converseParams))
+        let seq = 0
+
+        for await (const evt of resp.stream) {
+          if (evt.contentBlockDelta?.delta?.text) {
+            const delta = evt.contentBlockDelta.delta.text
+            await ws.send(
+              new PostToConnectionCommand({
+                ConnectionId: connectionId,
+                Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: delta })),
+              }),
+            )
+          }
+          if (evt.internalServerException || evt.modelStreamErrorException) {
+            const error = evt.internalServerException || evt.modelStreamErrorException
+            console.error('Stream error:', error.message)
+            await sendErrorToClient(connectionId, error.message || 'Stream error occurred', false)
+            break
+          }
+          if (evt.messageStop) {
+            break
           }
         }
-      }
-      await ws.send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(JSON.stringify({ event: 'complete' })),
-        }),
-      )
-    } else {
-      // Fallback: non-streaming invoke via inference profile, then stream chunks to client
-      const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'eu-central-1'
-      const endpoint = `https://bedrock-runtime.${region}.amazonaws.com`
-      const path = `/inference-profiles/${encodeURIComponent(process.env.INFERENCE_PROFILE_ARN)}/invoke-model`
 
-      const request = new HttpRequest({
-        protocol: 'https:',
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-        },
-        hostname: `bedrock-runtime.${region}.amazonaws.com`,
-        path,
-        body: JSON.stringify(body),
-      })
-
-      const signer = new SignatureV4({
-        service: 'bedrock',
-        region,
-        sha256: Sha256,
-        credentials: defaultProvider(),
-      })
-      const signed = await signer.sign(request)
-
-      const res = await fetch(`${endpoint}${path}`, {
-        method: 'POST',
-        headers: signed.headers,
-        body: request.body,
-      })
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '')
-        console.log('profile invoke error', res.status, errText)
-        throw new Error(`Bedrock profile invoke failed: ${res.status}`)
-      }
-      const txt = await res.text()
-      let json
-      try {
-        json = JSON.parse(txt)
-      } catch {
-        json = {}
-      }
-      const out = json.output_text || json.completion || JSON.stringify(json)
-      // stream the output in small chunks
-      let seq = 0
-      for (const ch of out.split('')) {
         await ws.send(
           new PostToConnectionCommand({
             ConnectionId: connectionId,
-            Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: ch })),
+            Data: Buffer.from(JSON.stringify({ event: 'complete' })),
           }),
         )
-        await new Promise((r) => setTimeout(r, 5))
+        responded = true
+      } catch (apiError) {
+        const isStreamingUnsupported =
+          apiError.name === 'ValidationException' &&
+          apiError.message?.toLowerCase().includes('model identifier')
+        if (isStreamingUnsupported) {
+          nonStreamingModels.add(effectiveModelId)
+          console.log(
+            `Model ${effectiveModelId} does not support streaming, falling back to Converse`,
+          )
+        } else {
+          console.error('Bedrock ConverseStream API call failed:', apiError.message)
+          await sendErrorToClient(connectionId, getClientFriendlyErrorMessage(apiError))
+          responded = true
+        }
       }
-      await ws.send(
-        new PostToConnectionCommand({
-          ConnectionId: connectionId,
-          Data: Buffer.from(JSON.stringify({ event: 'complete' })),
-        }),
-      )
+    }
+
+    // Non-streaming fallback
+    if (!responded) {
+      try {
+        const resp = await bedrock.send(new ConverseCommand(converseParams))
+
+        let out = ''
+        if (resp.output?.message?.content) {
+          for (const block of resp.output.message.content) {
+            if (block.text) out += block.text
+          }
+        }
+
+        // Send in word-sized chunks for a natural streaming feel
+        const chunks = out.match(/\S+\s*/g) || [out]
+        let seq = 0
+        for (const chunk of chunks) {
+          await ws.send(
+            new PostToConnectionCommand({
+              ConnectionId: connectionId,
+              Data: Buffer.from(JSON.stringify({ event: 'delta', seq: seq++, content: chunk })),
+            }),
+          )
+        }
+        await ws.send(
+          new PostToConnectionCommand({
+            ConnectionId: connectionId,
+            Data: Buffer.from(JSON.stringify({ event: 'complete' })),
+          }),
+        )
+      } catch (apiError) {
+        console.error('Bedrock Converse API call failed:', apiError.message)
+        await sendErrorToClient(connectionId, getClientFriendlyErrorMessage(apiError))
+      }
     }
   }
 }
