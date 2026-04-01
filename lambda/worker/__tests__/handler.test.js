@@ -136,7 +136,9 @@ describe('Worker Lambda Handler', () => {
           messages: expect.arrayContaining([
             expect.objectContaining({
               role: 'user',
-              content: expect.arrayContaining([expect.objectContaining({ text: expect.any(String) })]),
+              content: expect.arrayContaining([
+                expect.objectContaining({ text: expect.any(String) }),
+              ]),
             }),
           ]),
           system: expect.arrayContaining([expect.objectContaining({ text: expect.any(String) })]),
@@ -238,7 +240,9 @@ describe('Worker Lambda Handler', () => {
 
       const errorMessage = allMessages.find((msg) => msg.event === 'error')
       expect(errorMessage).toBeDefined()
-      expect(errorMessage.message).toBe('Service is temporarily busy. Please try again in a moment.')
+      expect(errorMessage.message).toBe(
+        'Service is temporarily busy. Please try again in a moment.',
+      )
 
       const completeMessage = allMessages.find((msg) => msg.event === 'complete')
       expect(completeMessage).toBeDefined()
@@ -257,7 +261,9 @@ describe('Worker Lambda Handler', () => {
 
       const errorMessage = allMessages.find((msg) => msg.event === 'error')
       expect(errorMessage).toBeDefined()
-      expect(errorMessage.message).toBe('Access denied. The model may not be enabled in your account.')
+      expect(errorMessage.message).toBe(
+        'Access denied. The model may not be enabled in your account.',
+      )
     })
 
     test('sends user-friendly error on ResourceNotFoundException', async () => {
@@ -331,7 +337,8 @@ describe('Worker Lambda Handler', () => {
       await handler(createSQSEvent('Follow up question', 'test-connection-id', { messages }))
 
       const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
-      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+      const callArgs =
+        ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
 
       expect(callArgs.messages).toHaveLength(2)
       expect(callArgs.messages[0].role).toBe('user')
@@ -361,7 +368,8 @@ describe('Worker Lambda Handler', () => {
       await handler(createSQSEvent('Second question', 'test-connection-id', { messages }))
 
       const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
-      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+      const callArgs =
+        ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
 
       expect(callArgs.messages).toHaveLength(3)
       // Last user message should contain the system prompt
@@ -381,7 +389,8 @@ describe('Worker Lambda Handler', () => {
       await handler(createSQSEvent('Hello'))
 
       const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
-      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+      const callArgs =
+        ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
 
       expect(callArgs.messages).toHaveLength(1)
       expect(callArgs.messages[0].role).toBe('user')
@@ -407,7 +416,8 @@ describe('Worker Lambda Handler', () => {
       await handler(createSQSEvent('Follow up', 'test-connection-id', { messages }))
 
       const { ConverseStreamCommand } = require('@aws-sdk/client-bedrock-runtime')
-      const callArgs = ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
+      const callArgs =
+        ConverseStreamCommand.mock.calls[ConverseStreamCommand.mock.calls.length - 1][0]
 
       // null and empty content should be filtered out
       expect(callArgs.messages).toHaveLength(2)
@@ -737,7 +747,13 @@ describe('Worker Lambda Handler', () => {
 
   describe('Inference Profile Fallback', () => {
     test('uses ConverseCommand when inference profile ARN is set', async () => {
-      process.env.INFERENCE_PROFILE_ARN = 'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+      process.env.INFERENCE_PROFILE_ARN =
+        'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+
+      // Streaming must fail with ValidationException to trigger non-streaming fallback
+      const streamError = new Error('The provided model identifier is invalid')
+      streamError.name = 'ValidationException'
+      mockConverseStreamSend.mockRejectedValue(streamError)
 
       mockConverseSend.mockResolvedValue({
         output: {
@@ -760,7 +776,13 @@ describe('Worker Lambda Handler', () => {
     })
 
     test('sends error to client when inference profile API call fails', async () => {
-      process.env.INFERENCE_PROFILE_ARN = 'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+      process.env.INFERENCE_PROFILE_ARN =
+        'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+
+      // Streaming must fail with ValidationException to trigger non-streaming fallback
+      const streamError = new Error('The provided model identifier is invalid')
+      streamError.name = 'ValidationException'
+      mockConverseStreamSend.mockRejectedValue(streamError)
 
       const apiError = new Error('Model quota exceeded')
       apiError.name = 'ServiceQuotaExceededException'
@@ -786,7 +808,13 @@ describe('Worker Lambda Handler', () => {
     })
 
     test('sends error on inference profile timeout', async () => {
-      process.env.INFERENCE_PROFILE_ARN = 'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+      process.env.INFERENCE_PROFILE_ARN =
+        'arn:aws:bedrock:us-east-1:123456789:inference-profile/test'
+
+      // Streaming must fail with ValidationException to trigger non-streaming fallback
+      const streamError = new Error('The provided model identifier is invalid')
+      streamError.name = 'ValidationException'
+      mockConverseStreamSend.mockRejectedValue(streamError)
 
       const timeoutError = new Error('Request timed out')
       timeoutError.name = 'ModelTimeoutException'
