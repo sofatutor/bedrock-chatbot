@@ -36,7 +36,8 @@ jest.unstable_mockModule('fs/promises', () => ({
 }))
 
 // Import after mocking
-const { validateModelId, validateGenerationParams, validateConfig } = await import('../lib/config.js')
+const { validateModelId, validateGenerationParams, validateConfig } =
+  await import('../lib/config.js')
 
 describe('Model ID Validation', () => {
   describe('validateModelId', () => {
@@ -286,7 +287,7 @@ describe('Cross-model Configuration Validation', () => {
 
     test('accepts hypothetical future AWS provider', () => {
       const config = createValidConfig('futureprovider.ai-model-2026-v1')
-      const { errors, warnings } = validateConfig(config, { includeWarnings: true })
+      const { errors } = validateConfig(config, { includeWarnings: true })
       expect(errors).toHaveLength(0)
       // Warning is informational, not blocking
     })
