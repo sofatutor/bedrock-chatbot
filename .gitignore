@@ -18,3 +18,5 @@ yarn-debug.log*
 yarn-error.log*
 # Temp
 tmp/
+# Config
+config.json
