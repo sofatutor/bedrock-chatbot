@@ -15,14 +15,12 @@
   "devDependencies": {
     "typescript": "^5.3.3",
     "ts-node": "^10.9.1",
-    "@types/node": "^20.11.20",
-    "aws-cdk": "2.114.1"
+    "@types/node": "^24.0.0",
+    "aws-cdk": "^2.1116.0"
   },
   "dependencies": {
-    "aws-cdk-lib": "2.114.1",
+    "aws-cdk-lib": "2.246.0",
     "constructs": "^10.4.2",
-    "@aws-cdk/aws-apigatewayv2-alpha": "2.114.1-alpha.0",
-    "@aws-cdk/aws-apigatewayv2-integrations-alpha": "2.114.1-alpha.0",
     "esbuild": "^0.25.10",
     "@aws-sdk/client-sqs": "^3.901.0",
     "@aws-sdk/client-dynamodb": "^3.902.0",

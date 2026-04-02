@@ -126,7 +126,9 @@ export function validateModelId(modelId) {
   }
 
   // Check if it's a known provider (warning only, not an error)
-  const isKnownProvider = Object.values(KNOWN_PROVIDER_PATTERNS).some((pattern) => pattern.test(modelId))
+  const isKnownProvider = Object.values(KNOWN_PROVIDER_PATTERNS).some((pattern) =>
+    pattern.test(modelId),
+  )
   if (!isKnownProvider) {
     return {
       error: null,

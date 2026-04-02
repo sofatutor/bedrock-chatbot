@@ -6,10 +6,8 @@ import { Queue, QueueEncryption } from 'aws-cdk-lib/aws-sqs'
 import { Runtime, Architecture } from 'aws-cdk-lib/aws-lambda'
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
-import { HttpApi, HttpMethod, CorsHttpMethod } from '@aws-cdk/aws-apigatewayv2-alpha'
-import { HttpLambdaIntegration } from '@aws-cdk/aws-apigatewayv2-integrations-alpha'
-import { WebSocketApi, WebSocketStage } from '@aws-cdk/aws-apigatewayv2-alpha'
-import { WebSocketLambdaIntegration } from '@aws-cdk/aws-apigatewayv2-integrations-alpha'
+import { HttpApi, HttpMethod, CorsHttpMethod, WebSocketApi, WebSocketStage } from 'aws-cdk-lib/aws-apigatewayv2'
+import { HttpLambdaIntegration, WebSocketLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations'
 import { PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam'
 import { StringParameter, ParameterTier } from 'aws-cdk-lib/aws-ssm'
 import { join } from 'path'
@@ -47,7 +45,7 @@ export class ApiStack extends Stack {
 
     const onConnect = new NodejsFunction(this, 'WsOnConnect', {
       functionName: `${props.resourcePrefix}WsOnConnect`,
-      runtime: Runtime.NODEJS_20_X,
+      runtime: Runtime.NODEJS_24_X,
       entry: join(__dirname, '../../lambda/websocket/onconnect/index.js'),
       handler: 'handler',
       architecture: Architecture.ARM_64,
@@ -56,7 +54,7 @@ export class ApiStack extends Stack {
     })
     const onDisconnect = new NodejsFunction(this, 'WsOnDisconnect', {
       functionName: `${props.resourcePrefix}WsOnDisconnect`,
-      runtime: Runtime.NODEJS_20_X,
+      runtime: Runtime.NODEJS_24_X,
       entry: join(__dirname, '../../lambda/websocket/ondisconnect/index.js'),
       handler: 'handler',
       architecture: Architecture.ARM_64,
@@ -77,7 +75,7 @@ export class ApiStack extends Stack {
 
     const defaultFn = new NodejsFunction(this, 'WsDefault', {
       functionName: `${props.resourcePrefix}WsDefault`,
-      runtime: Runtime.NODEJS_20_X,
+      runtime: Runtime.NODEJS_24_X,
       entry: join(__dirname, '../../lambda/websocket/default/index.js'),
       handler: 'handler',
       architecture: Architecture.ARM_64,
@@ -106,7 +104,7 @@ export class ApiStack extends Stack {
 
     const enqueueFn = new NodejsFunction(this, 'EnqueueFn', {
       functionName: `${props.resourcePrefix}EnqueueFn`,
-      runtime: Runtime.NODEJS_20_X,
+      runtime: Runtime.NODEJS_24_X,
       entry: join(__dirname, '../../lambda/enqueue/index.js'),
       handler: 'handler',
       architecture: Architecture.ARM_64,
@@ -134,7 +132,7 @@ export class ApiStack extends Stack {
 
     const workerFn = new NodejsFunction(this, 'WorkerFn', {
       functionName: `${props.resourcePrefix}WorkerFn`,
-      runtime: Runtime.NODEJS_20_X,
+      runtime: Runtime.NODEJS_24_X,
       entry: join(__dirname, '../../lambda/worker/index.js'),
       handler: 'handler',
       timeout: Duration.minutes(5),

@@ -94,9 +94,7 @@ function normalizeMessagesToConverseFormat(messages, systemPrompt, userPrompt) {
     }
   }
 
-  return normalized.length > 0
-    ? normalized
-    : [{ role: 'user', content: [{ text: composedUser }] }]
+  return normalized.length > 0 ? normalized : [{ role: 'user', content: [{ text: composedUser }] }]
 }
 
 /**
