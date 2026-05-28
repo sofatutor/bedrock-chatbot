@@ -81,6 +81,7 @@ See `config.example.json` for the full configuration structure.
 - [Architecture](docs/architecture.md) - System design and components
 - [Deployment](docs/deployment.md) - Deployment guide
 - [Configuration](docs/configuration.md) - Configuration management
+- [IAM Policy Guide](docs/iam-policy-guide.md) - Required AWS permissions
 - [Frontend](docs/frontend.md) - Frontend setup
 - [POC](docs/poc.md) - Proof of concept notes
 
